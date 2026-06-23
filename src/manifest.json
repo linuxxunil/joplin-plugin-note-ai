@@ -1,0 +1,16 @@
+{
+	"manifest_version": 1,
+	"id": "vip.bestsvip.note-ai",
+	"app_min_version": "3.6",
+	"version": "1.0.0",
+	"name": "Note AI",
+	"description": "用 AI 處理筆記內容 — 支援任何 OpenAI-compatible API（DeepSeek、OpenAI、Ollama、LM Studio 等）",
+	"author": "Jesse Lin",
+	"homepage_url": "https://github.com/linuxxunil",
+	"repository_url": "https://github.com/linuxxunil",
+	"keywords": ["ai", "llm", "chat", "note", "openai", "deepseek"],
+	"categories": ["productivity"],
+	"screenshots": [],
+	"icons": {},
+	"promo_tile": {}
+}
