@@ -31,6 +31,15 @@ async function readSettings() {
 	};
 }
 
+async function getSelectedText(): Promise<string | null> {
+	try {
+		const text = await joplin.commands.execute('selectedText') as string;
+		return text?.trim() || null;
+	} catch {
+		return null;
+	}
+}
+
 async function processNote() {
 	console.info('Note AI: processNote called');
 	try {
@@ -48,7 +57,11 @@ async function processNote() {
 			return;
 		}
 
-		console.info('Note AI: sending to LLM, body length =', note.body.length);
+		const selectedText = await getSelectedText();
+		const userContent = selectedText || note.body;
+		const label = selectedText ? '選取段落' : '全文';
+		console.info(`Note AI: sending ${label} to LLM, length =`, userContent.length);
+
 		const reply = await callLLM({
 			baseUrl,
 			apiKey,
@@ -57,14 +70,20 @@ async function processNote() {
 			topP,
 			messages: [
 				{ role: 'system', content: systemPrompt },
-				{ role: 'user', content: note.body },
+				{ role: 'user', content: userContent },
 			],
 		});
 		console.info('Note AI: LLM reply length =', reply.length);
 
-		const newBody = `${note.body}\n\n---\n**AI 回應:**\n\n${reply}`;
-		console.info('Note AI: saving note');
-		await joplin.data.put(['notes', note.id], null, { body: newBody });
+		if (selectedText) {
+			const newBody = `${note.body}\n\n---\n**AI 回應 (${label}):**\n> ${selectedText}\n\n${reply}`;
+			console.info('Note AI: saving note with selection-based reply');
+			await joplin.data.put(['notes', note.id], null, { body: newBody });
+		} else {
+			const newBody = `${note.body}\n\n---\n**AI 回應:**\n\n${reply}`;
+			console.info('Note AI: saving note with full-note reply');
+			await joplin.data.put(['notes', note.id], null, { body: newBody });
+		}
 		console.info('Note AI: done');
 	} catch (error) {
 		console.error('Note AI: error', error);
