@@ -2,6 +2,7 @@ import joplin from 'api';
 import { MenuItemLocation, SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
+import { createTestDialog, runConnectionTest, TestTarget } from './connectionTest';
 
 const SETTING_SECTION = 'noteAi';
 const SETTING_PROVIDER = 'aiProvider';
@@ -34,6 +35,7 @@ const COMMAND_CHAT = 'noteAiChat';
 const COMMAND_AI_PROCESS_NOTE = 'noteAiProcessNote';
 const COMMAND_MAGIC_WAND = 'noteAiMagicWand';
 const COMMAND_APPLY_ENDPOINT = 'noteAiApplyEndpoint';
+const COMMAND_TEST_CONNECTION = 'noteAiTestConnection';
 
 const PROVIDER_CUSTOM = 0;
 const PROVIDER_GEMINI = 1;
@@ -275,6 +277,45 @@ async function getSelectedText(): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+async function resolveTestTarget(): Promise<TestTarget> {
+	const s = await readSettings();
+	const provider = providerFrom(s);
+	const preset = PROVIDER_PRESETS[provider];
+	const modelOverride = String(s[SETTING_MODEL] || '').trim();
+	const fieldUrl = String(s[SETTING_BASE_URL] || '').trim();
+
+	let baseUrl: string;
+	let apiKey: string;
+	let model: string;
+	let apiFormat: ApiFormat = 'openai';
+	let keyMissing = false;
+	let modelMissing = false;
+
+	if (preset) {
+		baseUrl = fieldUrl || preset.baseUrl;
+		apiFormat = preset.apiFormat ?? 'openai';
+		model = modelOverride || preset.defaultModel;
+		apiKey = String(s[preset.keySetting] || '').trim();
+		if (!apiKey && !preset.keyOptional) keyMissing = true;
+		if (!model) modelMissing = true;
+	} else {
+		baseUrl = fieldUrl || 'https://api.openai.com/v1';
+		apiKey = String(s[SETTING_API_KEY] || '').trim();
+		model = modelOverride || 'gpt-5.5';
+		if (!apiKey) keyMissing = true;
+	}
+
+	const label = preset ? preset.keyLabel : '自訂';
+	let error: string | null = null;
+	if (keyMissing) {
+		error = `尚未設定 API Key（Provider「${label}」）— 請在 設定 → Note AI 的「API Key」欄位填入金鑰`;
+	} else if (modelMissing) {
+		error = '尚未設定模型名稱 — 請在「Model（覆寫，選填）」欄位填入（本機服務需填入已安裝的模型）';
+	}
+
+	return { label, baseUrl, apiKey, model, apiFormat, error };
 }
 
 async function applyEndpoint(): Promise<void> {
@@ -568,7 +609,7 @@ joplin.plugins.register({
 		await joplin.commands.register({
 			name: COMMAND_MAGIC_WAND,
 			label: 'Note AI: 整理筆記 / 優化內容',
-			iconName: 'fas fa-magic',
+			iconName: 'fas fa-hat-wizard',
 			execute: async () => {
 				await runMagicWand(magicWandHandle, magicWandDeps);
 			},
@@ -589,6 +630,21 @@ joplin.plugins.register({
 		await joplin.views.menuItems.create(
 			'noteAiApplyEndpointTools',
 			COMMAND_APPLY_ENDPOINT,
+			MenuItemLocation.Tools,
+		);
+
+		const testDialogHandle = await createTestDialog();
+		await joplin.commands.register({
+			name: COMMAND_TEST_CONNECTION,
+			label: 'Note AI: 測試 LLM 連線',
+			iconName: 'fas fa-plug',
+			execute: async () => {
+				await runConnectionTest(testDialogHandle, { resolve: resolveTestTarget });
+			},
+		});
+		await joplin.views.menuItems.create(
+			'noteAiTestConnectionTools',
+			COMMAND_TEST_CONNECTION,
 			MenuItemLocation.Tools,
 		);
 
