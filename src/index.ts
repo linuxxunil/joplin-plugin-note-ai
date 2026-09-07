@@ -4,11 +4,8 @@ import { callLLM } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
 
 const SETTING_SECTION = 'noteAi';
-const SETTING_SECTION_CUSTOM = 'noteAiCustom';
-const SETTING_SECTION_GEMINI = 'noteAiGemini';
-const SETTING_SECTION_DEEPSEEK = 'noteAiDeepseek';
-const SETTING_SECTION_OPENCODE = 'noteAiOpencode';
 const SETTING_PROVIDER = 'aiProvider';
+const SETTING_API_KEY_EDITOR = 'aiApiKeyEditor';
 const SETTING_BASE_URL = 'aiBaseUrl';
 const SETTING_API_KEY = 'aiApiKey';
 const SETTING_GEMINI_API_KEY = 'aiGeminiApiKey';
@@ -34,6 +31,15 @@ const PROVIDER_OPTIONS: Record<number, string> = {
 	[PROVIDER_OPENCODE]: 'OpenCode',
 };
 
+interface LLMConfig {
+	baseUrl: string;
+	apiKey: string;
+	model: string;
+	systemPrompt: string;
+	temperature: number;
+	topP: number;
+}
+
 interface ProviderPreset {
 	baseUrl: string;
 	defaultModel: string;
@@ -47,7 +53,7 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 		baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
 		defaultModel: 'gemini-2.5-flash',
 		keySetting: SETTING_GEMINI_API_KEY,
-		keyLabel: 'Gemini',
+		keyLabel: 'Google Gemini',
 	},
 	[PROVIDER_DEEPSEEK]: {
 		baseUrl: 'https://api.deepseek.com',
@@ -63,13 +69,9 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 	},
 };
 
-interface LLMConfig {
-	baseUrl: string;
-	apiKey: string;
-	model: string;
-	systemPrompt: string;
-	temperature: number;
-	topP: number;
+function slotKeyForProvider(provider: number): string {
+	const preset = PROVIDER_PRESETS[provider];
+	return preset ? preset.keySetting : SETTING_API_KEY;
 }
 
 function parseNumber(value: unknown, fallback: number): number {
@@ -80,6 +82,7 @@ function parseNumber(value: unknown, fallback: number): number {
 async function readSettings(): Promise<Record<string, unknown>> {
 	return joplin.settings.values([
 		SETTING_PROVIDER,
+		SETTING_API_KEY_EDITOR,
 		SETTING_BASE_URL,
 		SETTING_API_KEY,
 		SETTING_GEMINI_API_KEY,
@@ -92,9 +95,31 @@ async function readSettings(): Promise<Record<string, unknown>> {
 	]);
 }
 
+function providerFrom(s: Record<string, unknown>): number {
+	return Number(s[SETTING_PROVIDER]) || PROVIDER_CUSTOM;
+}
+
+let syncingEditor = false;
+let lastKnownProvider = PROVIDER_CUSTOM;
+
+async function writeSetting(key: string, value: string): Promise<void> {
+	syncingEditor = true;
+	try {
+		await joplin.settings.setValue(key, value);
+	} finally {
+		syncingEditor = false;
+	}
+}
+
+async function loadApiKeyEditor(): Promise<void> {
+	const s = await readSettings();
+	const slotKey = slotKeyForProvider(providerFrom(s));
+	await writeSetting(SETTING_API_KEY_EDITOR, String(s[slotKey] || ''));
+}
+
 async function resolveLLMConfig(): Promise<LLMConfig> {
 	const s = await readSettings();
-	const provider = Number(s[SETTING_PROVIDER]) || PROVIDER_CUSTOM;
+	const provider = providerFrom(s);
 	const preset = PROVIDER_PRESETS[provider];
 
 	let baseUrl: string;
@@ -106,14 +131,14 @@ async function resolveLLMConfig(): Promise<LLMConfig> {
 		model = preset.defaultModel;
 		apiKey = String(s[preset.keySetting] || '').trim();
 		if (!apiKey) {
-			throw new Error(`請先在設定 → 「Note AI - ${preset.keyLabel}」區塊中填入 API Key（或將 Provider 切換為「自訂」）`);
+			throw new Error(`請先在設定 → Note AI 中，於 Provider「${preset.keyLabel}」狀態下的 API Key 欄位填入金鑰`);
 		}
 	} else {
 		baseUrl = String(s[SETTING_BASE_URL] || '').trim() || 'https://api.openai.com/v1';
 		apiKey = String(s[SETTING_API_KEY] || '').trim();
 		model = String(s[SETTING_MODEL] || '').trim() || 'gpt-4o-mini';
 		if (!apiKey) {
-			throw new Error('請先在設定 → 「Note AI - 自訂（OpenAI 相容）」區塊中填入 API Key');
+			throw new Error('請先在設定 → Note AI 中，於 Provider「自訂」狀態下的 API Key 欄位填入金鑰');
 		}
 	}
 
@@ -193,23 +218,7 @@ joplin.plugins.register({
 	onStart: async function() {
 		await joplin.settings.registerSection(SETTING_SECTION, {
 			label: 'Note AI',
-			description: 'AI 設定 — 選擇 LLM 供應商與共用參數（各供應商的 API Key 請至對應的 Note AI - ○○ 區塊填寫）',
-		});
-		await joplin.settings.registerSection(SETTING_SECTION_CUSTOM, {
-			label: 'Note AI - 自訂（OpenAI 相容）',
-			description: 'Provider 為「自訂」時使用 — API 端點、金鑰與模型',
-		});
-		await joplin.settings.registerSection(SETTING_SECTION_GEMINI, {
-			label: 'Note AI - Gemini',
-			description: 'Provider 為「Google Gemini」時使用 — 僅需填寫 Gemini API Key',
-		});
-		await joplin.settings.registerSection(SETTING_SECTION_DEEPSEEK, {
-			label: 'Note AI - DeepSeek',
-			description: 'Provider 為「DeepSeek」時使用 — 僅需填寫 DeepSeek API Key',
-		});
-		await joplin.settings.registerSection(SETTING_SECTION_OPENCODE, {
-			label: 'Note AI - OpenCode',
-			description: 'Provider 為「OpenCode」時使用 — 僅需填寫 OpenCode API Key',
+			description: 'AI 設定 — 以 Provider 下拉選單切換供應商；API Key 欄位內容會跟著切換並自動保存',
 		});
 
 		await joplin.settings.registerSettings({
@@ -221,12 +230,21 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'LLM Provider',
-				description: '選擇供應商即自動使用其 API 端點與預設模型；「自訂」才使用下方 Base URL / Model 欄位',
+				description: '切換供應商；下方 API Key 欄位會自動載入所選供應商的金鑰，「自訂」才需填寫 Base URL / Model',
+			},
+			[SETTING_API_KEY_EDITOR]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: true,
+				secure: true,
+				label: 'API Key',
+				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存）。供應商端點：Gemini https://generativelanguage.googleapis.com/v1beta/openai、DeepSeek https://api.deepseek.com、OpenCode https://opencode.ai/zen/v1',
 			},
 			[SETTING_BASE_URL]: {
 				value: 'https://api.openai.com/v1',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_CUSTOM,
+				section: SETTING_SECTION,
 				public: true,
 				label: 'API Base URL（自訂）',
 				description: '僅在 Provider 為「自訂」時使用，例如 https://api.openai.com/v1',
@@ -234,43 +252,43 @@ joplin.plugins.register({
 			[SETTING_API_KEY]: {
 				value: '',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_CUSTOM,
-				public: true,
+				section: SETTING_SECTION,
+				public: false,
 				secure: true,
-				label: 'API Key（自訂 / OpenAI 相容）',
-				description: '僅在 Provider 為「自訂」時使用；安全儲存於系統鑰匙圈',
+				label: 'API Key - 自訂',
+				description: '內部儲存：Provider「自訂」的金鑰',
 			},
 			[SETTING_GEMINI_API_KEY]: {
 				value: '',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_GEMINI,
-				public: true,
+				section: SETTING_SECTION,
+				public: false,
 				secure: true,
-				label: 'Gemini API Key',
-				description: 'Provider 為「Google Gemini」時使用（取得：aistudio.google.com）。API 端點：https://generativelanguage.googleapis.com/v1beta/openai（官方 OpenAI 相容端點，自動使用）',
+				label: 'API Key - Google Gemini',
+				description: '內部儲存：Provider「Google Gemini」的金鑰（端點：https://generativelanguage.googleapis.com/v1beta/openai）',
 			},
 			[SETTING_DEEPSEEK_API_KEY]: {
 				value: '',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_DEEPSEEK,
-				public: true,
+				section: SETTING_SECTION,
+				public: false,
 				secure: true,
-				label: 'DeepSeek API Key',
-				description: 'Provider 為「DeepSeek」時使用（取得：platform.deepseek.com）。API 端點：https://api.deepseek.com（官方 OpenAI 相容端點，自動使用）',
+				label: 'API Key - DeepSeek',
+				description: '內部儲存：Provider「DeepSeek」的金鑰（端點：https://api.deepseek.com）',
 			},
 			[SETTING_OPENCODE_API_KEY]: {
 				value: '',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_OPENCODE,
-				public: true,
+				section: SETTING_SECTION,
+				public: false,
 				secure: true,
-				label: 'OpenCode API Key',
-				description: 'Provider 為「OpenCode」時使用（取得：opencode.ai）。API 端點：https://opencode.ai/zen/v1（官方 OpenAI 相容端點，自動使用）',
+				label: 'API Key - OpenCode',
+				description: '內部儲存：Provider「OpenCode」的金鑰（端點：https://opencode.ai/zen/v1）',
 			},
 			[SETTING_MODEL]: {
 				value: 'gpt-4o-mini',
 				type: SettingItemType.String,
-				section: SETTING_SECTION_CUSTOM,
+				section: SETTING_SECTION,
 				public: true,
 				label: 'Model（自訂）',
 				description: '僅在 Provider 為「自訂」時使用，例如 gpt-4o-mini、gemma-2-2b-it',
@@ -281,7 +299,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'System Prompt',
-				description: '系統提示詞，設定 AI 的行為與角色（魔法棒使用內建專用提示詞）',
+				description: '系統提示詞，設定 AI 的行為與角色（整理/優化功能使用內建專用提示詞）',
 			},
 			[SETTING_TEMPERATURE]: {
 				value: 0.7,
@@ -299,6 +317,42 @@ joplin.plugins.register({
 				label: 'Top-P',
 				description: '核取樣機率閾值 (0.0 ~ 1.0)',
 			},
+		});
+
+		lastKnownProvider = providerFrom(await readSettings());
+		await loadApiKeyEditor();
+
+		await joplin.settings.onChange(async (event) => {
+			try {
+				const keys: string[] = event.keys || [];
+				const hasProvider = keys.includes(SETTING_PROVIDER);
+				const hasEditor = keys.includes(SETTING_API_KEY_EDITOR);
+				if (!hasProvider && !hasEditor) return;
+
+				const s = await readSettings();
+				const currentProvider = providerFrom(s);
+
+				if (hasProvider) {
+					if (hasEditor && !syncingEditor) {
+						const editorValue = String(s[SETTING_API_KEY_EDITOR] || '');
+						const previousSlot = slotKeyForProvider(lastKnownProvider);
+						if (String(s[previousSlot] || '') !== editorValue) {
+							await writeSetting(previousSlot, editorValue);
+						}
+					}
+					lastKnownProvider = currentProvider;
+					await loadApiKeyEditor();
+					return;
+				}
+
+				if (syncingEditor) return;
+				const editorValue = String(s[SETTING_API_KEY_EDITOR] || '');
+				const slotKey = slotKeyForProvider(currentProvider);
+				if (String(s[slotKey] || '') === editorValue) return;
+				await writeSetting(slotKey, editorValue);
+			} catch (error) {
+				console.error('Note AI: settings sync error', error);
+			}
 		});
 
 		await joplin.commands.register({

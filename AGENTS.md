@@ -18,7 +18,7 @@
    - 判定 FAIL（存在 critical/high 問題）→ 修復問題後**重新審查**，直到 PASS。
 3. **驗證**：`npm run dist` 必須通過（含 TypeScript 編譯）；若有可獨立測試的純邏輯，補自動化測試並執行。
    - 判定 FAIL → 修復問題後**重新驗證**，直到 PASS。
-4. **遞增版號**：安全審查與驗證皆 PASS 後，將 `package.json` 與 `src/manifest.json` 的 patch 號 **+1**（兩者必須一致）。
+4. **遞增版號**：安全審查與驗證皆 PASS 後，將 `package.json` 與 `src/manifest.json` 的 patch 號 **+1**（兩者必須一致），並**重新執行 `npm run dist`** 重新打包（見下方「版號一致性」）。
 5. **git commit**：一併提交程式碼變更、測試檔（如有）、驗證記錄與版號變更。
 
 也可使用現成指令：`/security`、`/test`、`/ship`（完整流程）。
@@ -31,6 +31,10 @@
 ## 版號規範
 
 - 格式：semver `X.Y.Z`，同步修改 `package.json` 與 `src/manifest.json`，無其他版號來源。
+- **版號一致性（硬性規定）**：`package.json`、`src/manifest.json`、打包產物 `publish/*.jpl` 內嵌之 manifest 版號，三者必須一致。
+  - 版號遞增後**必須重新執行 `npm run dist`** 重新打包，並以 `tar -xOf publish/*.jpl manifest.json` 檢查產物內嵌版號無誤後，才可 commit。
+  - 驗證記錄必須包含「產物版號檢查」項目與結果。
+  - 違反此條款會導致 Joplin 顯示舊版號（歷史案例：v1.0.5 原始碼已遞增，但 .jpl 仍內嵌 v1.0.4）。
 - **遞增粒度：每個開發任務（一輪完整流程通過）遞增一次 patch 號**，不因單次檔案編輯遞增。每次修改的細節由 git 歷史追蹤。
 - major/minor 由開發者手動調整；agent 僅自動遞增 patch 號。
 - 版號遞增必須與對應變更在同一個 commit 中提交。
