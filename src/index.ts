@@ -405,7 +405,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'API Base URL',
-				description: '選擇 Provider 時自動填入該供應商的 API 端點；可自行修改（各供應商分別記憶）。欄位顯示不會即時更新（Joplin 限制）：重開設定畫面即可見，或點工具列／Tools 選單「套用端點」立即套用並顯示於通知',
+				description: '選擇 Provider 時自動套用該供應商的 API 端點（以通知顯示）；可自行修改（各供應商分別記憶）。欄位顯示不會即時重繪（Joplin 限制）— 重開設定畫面即可見；或於 Tools 選單／指令面板執行「套用端點」立即套用並顯示於通知',
 			},
 			[SETTING_API_KEY]: slotItem('自訂', 'API Key - 自訂'),
 			[SETTING_OPENAI_API_KEY]: slotItem('OpenAI', 'API Key - OpenAI'),
@@ -586,17 +586,12 @@ joplin.plugins.register({
 			iconName: 'fas fa-sync-alt',
 			execute: applyEndpoint,
 		});
-		await joplin.views.toolbarButtons.create(
-			'noteAiApplyEndpoint',
-			COMMAND_APPLY_ENDPOINT,
-			ToolbarButtonLocation.EditorToolbar,
-		);
 		await joplin.views.menuItems.create(
 			'noteAiApplyEndpointTools',
 			COMMAND_APPLY_ENDPOINT,
 			MenuItemLocation.Tools,
 		);
 
-		console.info('Note AI plugin started — toolbar buttons "noteAiMagicWand" (Note AI) and "noteAiApplyEndpoint" created in EditorToolbar');
+		console.info('Note AI plugin started — toolbar button "noteAiMagicWand" (Note AI) created in EditorToolbar');
 	},
 });
