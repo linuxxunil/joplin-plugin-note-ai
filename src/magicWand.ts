@@ -54,6 +54,15 @@ const DIALOG_STYLE = `
 	.note-ai-wand textarea.source-box { min-height: 90px; max-height: 22vh; }
 	.note-ai-wand textarea.result-box { min-height: 240px; }
 	.note-ai-wand input[type="text"] { width: 100%; box-sizing: border-box; margin-top: 8px; }
+	.note-ai-wand .processing { text-align: center; padding: 80px 0; }
+	.note-ai-wand .spinner {
+		width: 36px; height: 36px; margin: 0 auto 18px;
+		border: 4px solid rgba(127,127,127,0.25);
+		border-top-color: #888; border-radius: 50%;
+		animation: note-ai-spin 1s linear infinite;
+	}
+	@keyframes note-ai-spin { to { transform: rotate(360deg); } }
+	.note-ai-wand .processing .model { color: #888; margin-top: 8px; }
 	.note-ai-wand .md-preview {
 		display: none; box-sizing: border-box; min-height: 220px; max-height: 45vh;
 		overflow: auto; background: rgba(127,127,127,0.08);
@@ -68,6 +77,13 @@ const DIALOG_STYLE = `
 	.note-ai-wand .md-preview th, .note-ai-wand .md-preview td { border: 1px solid rgba(127,127,127,0.5); padding: 6px 10px; text-align: left; }
 	.note-ai-wand .md-preview th { background: rgba(127,127,127,0.12); font-weight: bold; }
 	.note-ai-wand .md-preview img { max-width: 100%; }
+	.note-ai-wand .error-box {
+		white-space: pre-wrap; word-break: break-word;
+		background: rgba(200,80,80,0.10);
+		border: 1px solid rgba(200,80,80,0.4);
+		border-radius: 6px; padding: 12px; margin-top: 12px;
+		max-height: 45vh; overflow: auto;
+	}
 </style>`;
 
 function buildInputHtml(scopeLabel: string, source: string): string {
@@ -84,6 +100,26 @@ function buildInputHtml(scopeLabel: string, source: string): string {
 	<div id="noteAiPreview1" class="md-preview md-compact"></div>
 	<input type="text" name="instruction" placeholder="AI 指令（選填），例如：條列化、翻成英文、更口語…">
 	<pre id="noteAiSource" style="display:none">${escapeHtml(source)}</pre>
+</div>`;
+}
+
+function buildProcessingHtml(model: string): string {
+	return `${DIALOG_STYLE}
+<div class="note-ai-wand">
+	<div class="processing">
+		<div class="spinner"></div>
+		<p><b>AI 處理中，請稍候…</b></p>
+		<p class="model">模型：${escapeHtml(model)}</p>
+	</div>
+</div>`;
+}
+
+function buildErrorHtml(message: string): string {
+	return `${DIALOG_STYLE}
+<div class="note-ai-wand">
+	<h3>Note AI</h3>
+	<p><b>⚠️ 發生錯誤</b></p>
+	<pre class="error-box">${escapeHtml(message)}</pre>
 </div>`;
 }
 
@@ -104,6 +140,13 @@ function buildPreviewHtml(scopeLabel: string, source: string, result: string): s
 }
 
 let busy = false;
+
+async function showProcessingError(handle: ViewHandle, message: string): Promise<void> {
+	const dialogs = joplin.views.dialogs;
+	await dialogs.setHtml(handle, buildErrorHtml(message));
+	await dialogs.setButtons(handle, [{ id: 'ok', title: '關閉' }]);
+	await dialogs.open(handle);
+}
 
 export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Promise<void> {
 	if (busy) {
@@ -142,7 +185,11 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 
 		const config = await deps.resolveConfig();
 
-		await dialogs.showToast({ message: 'Note AI: AI 處理中，請稍候…', type: ToastType.Info });
+		// Phase 1.5: 處理中畫面 — 重新開啟視窗並保持開啟（LLM 執行期間不再關窗）
+		await dialogs.setHtml(handle, buildProcessingHtml(config.model));
+		await dialogs.setButtons(handle, [{ id: 'cancel', title: '取消' }]);
+		void dialogs.open(handle);
+
 		const messages: ChatMessage[] = [
 			{ role: 'system', content: UNIFIED_SYSTEM_PROMPT },
 			{
@@ -151,21 +198,28 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 			},
 		];
 
-		const reply = (await callLLM({
-			baseUrl: config.baseUrl,
-			apiKey: config.apiKey,
-			model: config.model,
-			apiFormat: config.apiFormat,
-			temperature: config.temperature,
-			topP: config.topP,
-			messages,
-		})).trim();
+		let reply = '';
+		try {
+			reply = (await callLLM({
+				baseUrl: config.baseUrl,
+				apiKey: config.apiKey,
+				model: config.model,
+				apiFormat: config.apiFormat,
+				temperature: config.temperature,
+				topP: config.topP,
+				messages,
+			})).trim();
+		} catch (llmError) {
+			console.error('Note AI: LLM error', llmError);
+			await showProcessingError(handle, llmError instanceof Error ? llmError.message : String(llmError));
+			return;
+		}
 		if (!reply) {
-			alert('AI 未回傳內容，請稍後再試');
+			await showProcessingError(handle, 'AI 未回傳內容，請稍後再試或調整輸入內容');
 			return;
 		}
 
-		// Phase 2: 生成結果呈現，確認後覆蓋全文或加入末尾
+		// Phase 2: 原地換頁為結果預覽（視窗保持開啟）
 		await dialogs.setHtml(handle, buildPreviewHtml(scopeLabel, userInput, reply));
 		await dialogs.setButtons(handle, [
 			{ id: 'cancel', title: '取消' },
