@@ -44,10 +44,22 @@ function escapeHtml(text: string): string {
 		.replace(/'/g, '&#39;');
 }
 
+// Joplin 表單收集結構為 { 表單名: { 欄位名: 值 } }，需跨表單名攤平讀取
+function extractFormValues(formData: unknown, field: string): string {
+	if (!formData || typeof formData !== 'object') return '';
+	for (const formValues of Object.values(formData as Record<string, unknown>)) {
+		if (!formValues || typeof formValues !== 'object') continue;
+		const value = (formValues as Record<string, unknown>)[field];
+		if (value !== undefined && value !== null) return String(value);
+	}
+	return '';
+}
+
 const DIALOG_STYLE = `
 <style>
 	.note-ai-wand { font-family: inherit; line-height: 1.5; }
 	.note-ai-wand .scope { color: #888; }
+	.note-ai-wand form { margin: 0; }
 	.note-ai-wand .toolbar { margin: 10px 0 4px; }
 	.note-ai-wand .toolbar button { margin-right: 8px; padding: 4px 12px; cursor: pointer; }
 	.note-ai-wand .field-label { display: block; margin: 14px 0 4px; font-weight: bold; }
@@ -97,9 +109,11 @@ function buildInputHtml(scopeLabel: string, source: string): string {
 		<button type="button" id="noteAiClearInput">✕ 清空</button>
 		<button type="button" id="noteAiTogglePreview1">👁 預覽 Markdown</button>
 	</div>
-	<textarea name="userInput" id="noteAiInput" placeholder="在此輸入、貼上內容，或點「重新載入筆記內容」…">${escapeHtml(source)}</textarea>
-	<div id="noteAiPreview1" class="md-preview md-compact"></div>
-	<input type="text" name="instruction" placeholder="AI 指令（選填），例如：條列化、翻成英文、更口語…">
+	<form name="noteAiInput">
+		<textarea name="userInput" id="noteAiInput" placeholder="在此輸入、貼上內容，或點「重新載入筆記內容」…">${escapeHtml(source)}</textarea>
+		<div id="noteAiPreview1" class="md-preview md-compact"></div>
+		<input type="text" name="instruction" placeholder="AI 指令（選填），例如：條列化、翻成英文、更口語…">
+	</form>
 	<pre id="noteAiSource" style="display:none">${escapeHtml(source)}</pre>
 </div>`;
 }
@@ -135,8 +149,10 @@ function buildPreviewHtml(scopeLabel: string, source: string, result: string): s
 	<div class="toolbar">
 		<button type="button" id="noteAiTogglePreview2">👁 預覽 Markdown</button>
 	</div>
-	<textarea name="result" id="noteAiResult" class="result-box">${escapeHtml(result)}</textarea>
-	<div id="noteAiPreview2" class="md-preview"></div>
+	<form name="noteAiResult">
+		<textarea name="result" id="noteAiResult" class="result-box">${escapeHtml(result)}</textarea>
+		<div id="noteAiPreview2" class="md-preview"></div>
+	</form>
 </div>`;
 }
 
@@ -181,8 +197,8 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 			return;
 		}
 
-		const instruction = String(input.formData.instruction || '').trim();
-		const userInput = String(input.formData.userInput || '').trim();
+		const instruction = extractFormValues(input.formData, 'instruction').trim();
+		const userInput = extractFormValues(input.formData, 'userInput').trim();
 		if (!userInput) {
 			await showNoticeBox('輸入內容為空，請輸入內容或點「重新載入筆記內容」');
 			return;
@@ -240,16 +256,17 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		]);
 		const decision = await dialogs.open(handle);
 
-		if (decision.id === 'replace') {
-			const finalResult = decision.formData ? String(decision.formData.result || '').trim() || reply : reply;
-			await joplin.data.put(['notes', note.id], null, { body: finalResult });
-			await dialogs.showToast({ message: 'Note AI: 已取代筆記全文', type: ToastType.Success });
-		} else if (decision.id === 'append') {
-			const finalResult = decision.formData ? String(decision.formData.result || '').trim() || reply : reply;
-			const fresh = await joplin.data.get(['notes', note.id], { fields: ['body'] });
-			const body = `${fresh.body}\n\n---\n**AI 生成內容：**\n\n${finalResult}`;
-			await joplin.data.put(['notes', note.id], null, { body });
-			await dialogs.showToast({ message: 'Note AI: 已加入筆記末尾', type: ToastType.Success });
+		if (decision.id === 'replace' || decision.id === 'append') {
+			const finalResult = extractFormValues(decision.formData, 'result').trim() || reply;
+			if (decision.id === 'replace') {
+				await joplin.data.put(['notes', note.id], null, { body: finalResult });
+				await dialogs.showToast({ message: 'Note AI: 已取代筆記全文', type: ToastType.Success });
+			} else {
+				const fresh = await joplin.data.get(['notes', note.id], { fields: ['body'] });
+				const body = `${fresh.body}\n\n---\n**AI 生成內容：**\n\n${finalResult}`;
+				await joplin.data.put(['notes', note.id], null, { body });
+				await dialogs.showToast({ message: 'Note AI: 已加入筆記末尾', type: ToastType.Success });
+			}
 		}
 	} catch (error) {
 		console.error('Note AI: error', error);

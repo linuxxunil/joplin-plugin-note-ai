@@ -99,4 +99,8 @@
 			handleProviderChange(target);
 		}
 	}, true);
+
+	document.addEventListener('submit', function (event) {
+		event.preventDefault();
+	}, true);
 })();
