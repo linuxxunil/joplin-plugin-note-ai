@@ -1,11 +1,17 @@
 {
   "name": "joplin-plugin-note-ai",
-  "version": "1.0.18",
+  "version": "1.1.0",
+  "description": "用 AI 處理筆記內容 — 支援任何 OpenAI-compatible API（DeepSeek、OpenAI、Ollama、LM Studio 等）",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linuxxunil/joplin-plugin-note-ai.git"
+  },
   "scripts": {
     "dist": "webpack --env joplin-plugin-config=buildMain && webpack --env joplin-plugin-config=buildExtraScripts && webpack --env joplin-plugin-config=createArchive",
     "prepare": "npm run dist",
     "updateVersion": "webpack --env joplin-plugin-config=updateVersion",
-    "update": "npm install -g generator-joplin && yo joplin --node-package-manager npm --update --force"
+    "update": "npm install -g generator-joplin && yo joplin --node-package-manager npm --update --force",
+    "publish": "npm publish"
   },
   "license": "MIT",
   "keywords": [
