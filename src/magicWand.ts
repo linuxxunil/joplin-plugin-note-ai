@@ -1,6 +1,7 @@
 import joplin from 'api';
 import { ToastType, ViewHandle } from 'api/types';
 import { callLLM, ApiFormat, ChatMessage } from './llm';
+import { showErrorBox, showNoticeBox } from './notify';
 
 const UNIFIED_SYSTEM_PROMPT = [
 	'你是專業的筆記整理與優化助手。',
@@ -158,7 +159,7 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		const dialogs = joplin.views.dialogs;
 		const note = await joplin.workspace.selectedNote();
 		if (!note) {
-			alert('請先選擇一則筆記');
+			await showNoticeBox('請先選擇一則筆記');
 			return;
 		}
 
@@ -174,16 +175,27 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 			{ id: 'ok', title: '生成' },
 		]);
 		const input = await dialogs.open(handle);
-		if (input.id !== 'ok' || !input.formData) return;
+		if (input.id !== 'ok') return;
+		if (!input.formData) {
+			await showNoticeBox('無法讀取輸入內容（表單資料缺失），請關閉後重新開啟再試一次');
+			return;
+		}
 
 		const instruction = String(input.formData.instruction || '').trim();
 		const userInput = String(input.formData.userInput || '').trim();
 		if (!userInput) {
-			alert('輸入內容為空，請輸入內容或點「重新載入筆記內容」');
+			await showNoticeBox('輸入內容為空，請輸入內容或點「重新載入筆記內容」');
 			return;
 		}
 
-		const config = await deps.resolveConfig();
+		let config: MagicWandConfig;
+		try {
+			config = await deps.resolveConfig();
+		} catch (configError) {
+			console.error('Note AI: config error', configError);
+			await showProcessingError(handle, configError instanceof Error ? configError.message : String(configError));
+			return;
+		}
 
 		// Phase 1.5: 處理中畫面 — 重新開啟視窗並保持開啟（LLM 執行期間不再關窗）
 		await dialogs.setHtml(handle, buildProcessingHtml(config.model));
@@ -241,7 +253,7 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		}
 	} catch (error) {
 		console.error('Note AI: error', error);
-		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
+		await showErrorBox(error instanceof Error ? error.message : String(error));
 	} finally {
 		busy = false;
 	}

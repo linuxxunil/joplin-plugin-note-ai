@@ -3,6 +3,7 @@ import { MenuItemLocation, SettingItem, SettingItemType, ToastType, ToolbarButto
 import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
 import { createTestDialog, runConnectionTest, TestTarget } from './connectionTest';
+import { showErrorBox, showNoticeBox } from './notify';
 
 const SETTING_SECTION = 'noteAi';
 const SETTING_PROVIDER = 'aiProvider';
@@ -34,7 +35,6 @@ const SETTING_TOP_P = 'aiTopP';
 const COMMAND_CHAT = 'noteAiChat';
 const COMMAND_AI_PROCESS_NOTE = 'noteAiProcessNote';
 const COMMAND_MAGIC_WAND = 'noteAiMagicWand';
-const COMMAND_APPLY_ENDPOINT = 'noteAiApplyEndpoint';
 const COMMAND_TEST_CONNECTION = 'noteAiTestConnection';
 
 const PROVIDER_CUSTOM = 0;
@@ -318,35 +318,13 @@ async function resolveTestTarget(): Promise<TestTarget> {
 	return { label, baseUrl, apiKey, model, apiFormat, error };
 }
 
-async function applyEndpoint(): Promise<void> {
-	try {
-		const s = await readSettings();
-		const provider = providerFrom(s);
-		const preset = PROVIDER_PRESETS[provider];
-		const label = preset ? preset.keyLabel : '自訂';
-		const url = preset
-			? (String(s[preset.urlSetting] || '').trim() || preset.baseUrl)
-			: String(s[SETTING_BASE_URL] || '').trim();
-		if (!url) {
-			alert('目前 Provider 無可套用的端點，請在 API Base URL 欄位自行填寫');
-			return;
-		}
-		await joplin.settings.setValue(SETTING_BASE_URL, url);
-		await joplin.views.dialogs.showToast({ message: `Note AI: 已套用「${label}」端點：${url}`, type: ToastType.Info });
-		console.info('Note AI: applied endpoint for', label);
-	} catch (error) {
-		console.error('Note AI: apply endpoint error', error);
-		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
-	}
-}
-
 async function processNote() {
 	console.info('Note AI: processNote called');
 	try {
 		const note = await joplin.workspace.selectedNote();
 		console.info('Note AI: selectedNote =', note ? `${note.id} / ${note.title}` : 'null');
 		if (!note) {
-			alert('請先選擇一則筆記');
+			await showNoticeBox('請先選擇一則筆記');
 			return;
 		}
 
@@ -371,7 +349,7 @@ async function processNote() {
 			],
 		})).trim();
 		if (!reply) {
-			alert('AI 未回傳內容，請稍後再試');
+			await showNoticeBox('AI 未回傳內容，請稍後再試');
 			return;
 		}
 		console.info('Note AI: LLM reply length =', reply.length);
@@ -390,7 +368,7 @@ async function processNote() {
 		console.info('Note AI: done');
 	} catch (error) {
 		console.error('Note AI: error', error);
-		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
+		await showErrorBox(error instanceof Error ? error.message : String(error));
 	}
 }
 
@@ -446,7 +424,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'API Base URL',
-				description: '選擇 Provider 時自動套用該供應商的 API 端點（以通知顯示）；可自行修改（各供應商分別記憶）。欄位顯示不會即時重繪（Joplin 限制）— 重開設定畫面即可見；或於 Tools 選單／指令面板執行「套用端點」立即套用並顯示於通知',
+				description: '選擇 Provider 時自動套用該供應商的 API 端點（以通知顯示）；可自行修改（各供應商分別記憶）。欄位顯示不會即時重繪（Joplin 限制）— 重開設定畫面即可見',
 			},
 			[SETTING_API_KEY]: slotItem('自訂', 'API Key - 自訂'),
 			[SETTING_OPENAI_API_KEY]: slotItem('OpenAI', 'API Key - OpenAI'),
@@ -585,10 +563,10 @@ joplin.plugins.register({
 							{ role: 'user', content: 'Hello! 請簡單介紹你自己。' },
 						],
 					});
-					alert(`LLM 回應:\n\n${reply}`);
+					await showNoticeBox(`LLM 回應:\n\n${reply}`);
 				} catch (error) {
 					console.error('Note AI: chat error', error);
-					alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
+					await showErrorBox(error instanceof Error ? error.message : String(error));
 				}
 			},
 		});
@@ -619,18 +597,6 @@ joplin.plugins.register({
 			'noteAiMagicWand',
 			COMMAND_MAGIC_WAND,
 			ToolbarButtonLocation.EditorToolbar,
-		);
-
-		await joplin.commands.register({
-			name: COMMAND_APPLY_ENDPOINT,
-			label: 'Note AI: 套用所選 Provider 的 API 端點',
-			iconName: 'fas fa-sync-alt',
-			execute: applyEndpoint,
-		});
-		await joplin.views.menuItems.create(
-			'noteAiApplyEndpointTools',
-			COMMAND_APPLY_ENDPOINT,
-			MenuItemLocation.Tools,
 		);
 
 		const testDialogHandle = await createTestDialog();

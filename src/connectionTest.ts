@@ -1,6 +1,7 @@
 import joplin from 'api';
 import { ToastType, ViewHandle } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
+import { showErrorBox } from './notify';
 
 export interface TestTarget {
 	label: string;
@@ -20,8 +21,9 @@ interface TestResult {
 	message: string;
 }
 
-const TEST_PROMPT = '連線測試：請回覆 OK';
-const TEST_MAX_TOKENS = 64;
+const TEST_PROMPT = '你是誰';
+const TEST_MAX_TOKENS = 512;
+const REPLY_DISPLAY_LIMIT = 2000;
 
 function escapeHtml(text: string): string {
 	return text
@@ -82,7 +84,7 @@ function buildSummaryHtml(target: TestTarget, result: TestResult | null): string
 		<tr><th>請求格式</th><td>${escapeHtml(target.apiFormat)}</td></tr>
 	</table>
 	${result ? bannerHtml(result) : ''}
-	<p class="hint">點「測試連線」以目前設定送出一個極小測試請求（不會寫入筆記）。修改設定後重開此視窗即可測試新設定。</p>
+	<p class="hint">點「測試連線」以目前設定送出「你是誰」測試請求（不會寫入筆記），成功時顯示 AI 完整回覆。修改設定後重開此視窗即可測試新設定。</p>
 </div>`;
 }
 
@@ -145,10 +147,14 @@ export async function runConnectionTest(handle: ViewHandle, deps: ConnectionTest
 					});
 					const latency = Date.now() - startedAt;
 					const snippet = reply.trim();
+					let replyText = snippet;
+					if (replyText.length > REPLY_DISPLAY_LIMIT) {
+						replyText = `${replyText.slice(0, REPLY_DISPLAY_LIMIT)}…（已截斷）`;
+					}
 					result = {
 						ok: true,
 						message: snippet
-							? `延遲 ${latency} ms\n回覆：「${snippet.slice(0, 40)}${snippet.length > 40 ? '…' : ''}」`
+							? `延遲 ${latency} ms\nAI 回覆：\n${replyText}`
 							: `延遲 ${latency} ms（連線正常，回應為空）`,
 					};
 				} catch (llmError) {
@@ -163,7 +169,7 @@ export async function runConnectionTest(handle: ViewHandle, deps: ConnectionTest
 		}
 	} catch (error) {
 		console.error('Note AI: connection test error', error);
-		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
+		await showErrorBox(error instanceof Error ? error.message : String(error));
 	} finally {
 		busy = false;
 	}
