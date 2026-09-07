@@ -2,6 +2,7 @@ import joplin from 'api';
 import { SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
+import { createSettingsDialog, runSettingsDialog, SettingsDialogData } from './settingsDialog';
 
 const SETTING_SECTION = 'noteAi';
 const SETTING_PROVIDER = 'aiProvider';
@@ -33,6 +34,7 @@ const SETTING_TOP_P = 'aiTopP';
 const COMMAND_CHAT = 'noteAiChat';
 const COMMAND_AI_PROCESS_NOTE = 'noteAiProcessNote';
 const COMMAND_MAGIC_WAND = 'noteAiMagicWand';
+const COMMAND_SETTINGS = 'noteAiSettings';
 
 const PROVIDER_CUSTOM = 0;
 const PROVIDER_GEMINI = 1;
@@ -274,6 +276,51 @@ async function getSelectedText(): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+async function buildSettingsData(): Promise<SettingsDialogData> {
+	const s = await readSettings();
+	const options: SettingsDialogData['options'] = [];
+	const slots: SettingsDialogData['slots'] = {};
+	for (const keyStr of Object.keys(PROVIDER_OPTIONS)) {
+		const id = Number(keyStr);
+		const preset = PROVIDER_PRESETS[id];
+		options.push({
+			id,
+			label: PROVIDER_OPTIONS[id],
+			defaultUrl: preset ? preset.baseUrl : 'https://api.openai.com/v1',
+		});
+		const keySlot = slotKeyForProvider(id);
+		const urlSlot = urlSlotForProvider(id);
+		slots[String(id)] = {
+			key: String(s[keySlot] || ''),
+			url: id === PROVIDER_CUSTOM ? String(s[SETTING_BASE_URL] || '') : String(s[urlSlot] || ''),
+		};
+	}
+	return {
+		options,
+		slots,
+		current: {
+			provider: providerFrom(s),
+			model: String(s[SETTING_MODEL] || ''),
+			baseUrl: String(s[SETTING_BASE_URL] || ''),
+		},
+	};
+}
+
+async function saveConfigSelection(selection: { provider: number; apiKey: string; baseUrl: string; model: string }): Promise<void> {
+	const preset = PROVIDER_PRESETS[selection.provider];
+	if (preset) {
+		await joplin.settings.setValue(preset.keySetting, selection.apiKey);
+		await joplin.settings.setValue(preset.urlSetting, selection.baseUrl);
+	} else {
+		await joplin.settings.setValue(SETTING_API_KEY, selection.apiKey);
+	}
+	await joplin.settings.setValue(SETTING_BASE_URL, selection.baseUrl);
+	await joplin.settings.setValue(SETTING_API_KEY_EDITOR, selection.apiKey);
+	await joplin.settings.setValue(SETTING_PROVIDER, selection.provider);
+	await joplin.settings.setValue(SETTING_MODEL, selection.model);
+	lastKnownProvider = selection.provider;
 }
 
 async function processNote() {
@@ -552,6 +599,24 @@ joplin.plugins.register({
 			ToolbarButtonLocation.EditorToolbar,
 		);
 
-		console.info('Note AI plugin started — toolbar button "noteAiMagicWand" (Note AI) created in EditorToolbar');
+		const settingsHandle = await createSettingsDialog();
+		await joplin.commands.register({
+			name: COMMAND_SETTINGS,
+			label: 'Note AI: 連線設定',
+			iconName: 'fas fa-cog',
+			execute: async () => {
+				await runSettingsDialog(settingsHandle, {
+					buildData: buildSettingsData,
+					save: saveConfigSelection,
+				});
+			},
+		});
+		await joplin.views.toolbarButtons.create(
+			'noteAiSettings',
+			COMMAND_SETTINGS,
+			ToolbarButtonLocation.EditorToolbar,
+		);
+
+		console.info('Note AI plugin started — toolbar buttons "noteAiMagicWand" (Note AI) and "noteAiSettings" created in EditorToolbar');
 	},
 });

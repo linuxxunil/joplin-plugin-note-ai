@@ -17,8 +17,9 @@
 	function renderPreview(textarea, previewDiv) {
 		var html;
 		try {
-			html = window.DOMPurify.sanitize(window.marked.parse(textarea.value || ''));
+			html = window.DOMPurify.sanitize(window.marked.parse(textarea.value || '', { gfm: true }));
 		} catch (err) {
+			if (window.console && window.console.warn) window.console.warn('Note AI: markdown render failed', err);
 			html = '';
 		}
 		if (!html) {
@@ -49,6 +50,29 @@
 		}
 	}
 
+	function readConfigData() {
+		var dataEl = document.getElementById('noteAiConfigData');
+		if (!dataEl) return null;
+		try {
+			return JSON.parse(dataEl.textContent || '{}');
+		} catch (err) {
+			return null;
+		}
+	}
+
+	function handleProviderChange(select) {
+		var keyInput = document.getElementById('noteAiSettingsKey');
+		var urlInput = document.getElementById('noteAiSettingsUrl');
+		if (!keyInput || !urlInput) return;
+		var data = readConfigData();
+		if (!data) return;
+		var id = String(select.value);
+		var slot = data.slots && data.slots[id] ? data.slots[id] : {};
+		var defaultUrl = data.defaults && data.defaults[id] ? data.defaults[id] : '';
+		keyInput.value = slot.key || '';
+		urlInput.value = slot.url || defaultUrl;
+	}
+
 	function handleActivate(event) {
 		var target = event.target;
 		if (!target || !target.id) return;
@@ -68,4 +92,11 @@
 	}
 
 	document.addEventListener('click', handleActivate, true);
+
+	document.addEventListener('change', function (event) {
+		var target = event.target;
+		if (target && target.id === 'noteAiSettingsProvider') {
+			handleProviderChange(target);
+		}
+	}, true);
 })();

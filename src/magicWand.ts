@@ -64,6 +64,10 @@ const DIALOG_STYLE = `
 	.note-ai-wand .md-preview code { background: rgba(127,127,127,0.15); border-radius: 3px; padding: 1px 4px; }
 	.note-ai-wand .md-preview pre code { background: transparent; padding: 0; }
 	.note-ai-wand .md-preview a { color: #4a86e8; }
+	.note-ai-wand .md-preview table { border-collapse: collapse; margin: 8px 0; }
+	.note-ai-wand .md-preview th, .note-ai-wand .md-preview td { border: 1px solid rgba(127,127,127,0.5); padding: 6px 10px; text-align: left; }
+	.note-ai-wand .md-preview th { background: rgba(127,127,127,0.12); font-weight: bold; }
+	.note-ai-wand .md-preview img { max-width: 100%; }
 </style>`;
 
 function buildInputHtml(scopeLabel: string, source: string): string {
