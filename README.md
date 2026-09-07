@@ -63,28 +63,17 @@ Tools 選單 → `Note AI: 測試 LLM 連線`：以目前設定送出測試請�
 2. Joplin → 設定 → 外掛程式 → 安裝外掛程式檔案 → 選取 `.jpl`
 3. 到 設定 → Note AI 選擇 Provider 並填入 API Key
 
-## 開發與發佈
-
-### 開發
+## 開發
 
 ```bash
 npm install
 npm run dist        # 建置，產出 publish/vip.bestsvip.note-ai.jpl
+npm run publish     # 發佈到 npm（自動重新建置；Joplin 官方外掛倉庫會自動收錄）
 ```
 
 詳細建置說明請見 [GENERATOR_DOC.md](./GENERATOR_DOC.md)。
 
-### 發佈到 npm
-
-1. 更新版號：`package.json` 與 `src/manifest.json`（兩者需一致）
-2. 到 npmjs.com 建立發佈用 token（頭像 → Access Tokens → Generate New Token → 類型 **Automation**）
-3. 執行發佈：
-
-   ```bash
-   npm publish --//registry.npmjs.org/:_authToken=npm_你的token
-   ```
-
-4. 到 [npmjs.com/package/joplin-plugin-note-ai](https://www.npmjs.com/package/joplin-plugin-note-ai) 確認新版本
+發佈步驟詳見 [publish.md](./publish.md)。
 
 ## License
 
