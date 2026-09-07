@@ -322,7 +322,7 @@ joplin.plugins.register({
 
 		await joplin.commands.register({
 			name: COMMAND_MAGIC_WAND,
-			label: 'Note AI: 魔法棒（整理筆記 / 優化內容）',
+			label: 'Note AI: 整理筆記 / 優化內容',
 			iconName: 'fas fa-magic',
 			execute: async () => {
 				await runMagicWand(magicWandHandle, magicWandDeps);
@@ -335,6 +335,6 @@ joplin.plugins.register({
 			ToolbarButtonLocation.EditorToolbar,
 		);
 
-		console.info('Note AI plugin started — toolbar button "noteAiMagicWand" created in EditorToolbar');
+		console.info('Note AI plugin started — toolbar button "noteAiMagicWand" (Note AI) created in EditorToolbar');
 	},
 });

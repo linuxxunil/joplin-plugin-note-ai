@@ -51,21 +51,17 @@ const DIALOG_STYLE = `
 	.note-ai-wand { font-family: inherit; line-height: 1.5; }
 	.note-ai-wand .scope { color: #888; }
 	.note-ai-wand .mode { display: block; margin: 6px 0; }
-	.note-ai-wand textarea { width: 100%; min-height: 140px; box-sizing: border-box; margin-top: 4px; }
+	.note-ai-wand .field-label { display: block; margin: 14px 0 4px; font-weight: bold; }
+	.note-ai-wand textarea { width: 100%; box-sizing: border-box; min-height: 150px; }
+	.note-ai-wand textarea.source-box { min-height: 90px; max-height: 22vh; }
+	.note-ai-wand textarea.result-box { min-height: 240px; }
 	.note-ai-wand input[type="text"] { width: 100%; box-sizing: border-box; margin-top: 8px; }
-	.note-ai-wand .preview {
-		white-space: pre-wrap; word-break: break-word;
-		background: rgba(127,127,127,0.08);
-		border: 1px solid rgba(127,127,127,0.3);
-		border-radius: 6px; padding: 12px;
-		max-height: 55vh; overflow: auto; font-family: inherit;
-	}
 </style>`;
 
 function buildInputHtml(scopeLabel: string): string {
 	return `${DIALOG_STYLE}
 <div class="note-ai-wand">
-	<h3>✨ Note AI 魔法棒</h3>
+	<h3>Note AI</h3>
 	<p class="scope">處理範圍：<b>${escapeHtml(scopeLabel)}</b>（選取文字時優先處理選取段落）</p>
 	<label class="mode"><input type="radio" name="mode" value="organize" checked> 整理筆記內容</label>
 	<label class="mode"><input type="radio" name="mode" value="optimize"> 優化我輸入的內容</label>
@@ -74,13 +70,15 @@ function buildInputHtml(scopeLabel: string): string {
 </div>`;
 }
 
-function buildPreviewHtml(mode: WandMode, scopeLabel: string, result: string): string {
-	const title = mode === 'organize' ? '整理結果預覽' : '優化結果預覽';
+function buildPreviewHtml(mode: WandMode, scopeLabel: string, source: string, result: string): string {
 	return `${DIALOG_STYLE}
 <div class="note-ai-wand">
-	<h3>${title}</h3>
-	<p class="scope">處理範圍：<b>${escapeHtml(scopeLabel)}</b> — 請選擇下方按鈕，決定是否存入筆記。</p>
-	<pre class="preview">${escapeHtml(result)}</pre>
+	<h3>Note AI</h3>
+	<p class="scope">${mode === 'organize' ? '整理' : '優化'}結果 — 處理範圍：<b>${escapeHtml(scopeLabel)}</b>。確認內容後按「寫入」存入筆記，或按「取消」放棄。</p>
+	<label class="field-label">輸入內容</label>
+	<textarea readonly class="source-box">${escapeHtml(source)}</textarea>
+	<label class="field-label">生成結果（可直接編輯）</label>
+	<textarea name="result" class="result-box">${escapeHtml(result)}</textarea>
 </div>`;
 }
 
@@ -103,12 +101,12 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		const selection = await deps.getSelectedText();
 		const scopeLabel = selection ? `選取段落（${selection.length} 字）` : '筆記全文';
 
-		// Phase 1: 選擇模式與輸入內容
-		await dialogs.setFitToContent(handle, true);
+		// Phase 1: 選擇模式與輸入內容，按「生成」送出
+		await dialogs.setFitToContent(handle, false);
 		await dialogs.setHtml(handle, buildInputHtml(scopeLabel));
 		await dialogs.setButtons(handle, [
 			{ id: 'cancel', title: '取消' },
-			{ id: 'ok', title: '送出' },
+			{ id: 'ok', title: '生成' },
 		]);
 		const input = await dialogs.open(handle);
 		if (input.id !== 'ok' || !input.formData) return;
@@ -147,32 +145,23 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 			return;
 		}
 
-		// Phase 2: 預覽結果並決定是否存入筆記
-		await dialogs.setFitToContent(handle, false);
-		await dialogs.setHtml(handle, buildPreviewHtml(mode, scopeLabel, reply));
+		// Phase 2: 生成結果輸出至另一個 Text，按「寫入」存入筆記或「取消」放棄
+		await dialogs.setHtml(handle, buildPreviewHtml(mode, scopeLabel, source, reply));
 		await dialogs.setButtons(handle, [
-			{ id: 'cancel', title: '放棄' },
-			{ id: 'append', title: '附加到筆記末尾' },
-			{ id: 'insert', title: '插入游標處' },
-			{ id: 'replace', title: '取代全文' },
+			{ id: 'cancel', title: '取消' },
+			{ id: 'ok', title: '寫入' },
 		]);
 		const decision = await dialogs.open(handle);
+		if (decision.id !== 'ok' || !decision.formData) return;
 
+		const finalResult = String(decision.formData.result || '').trim() || reply;
 		const modeLabel = mode === 'organize' ? '整理' : '優化';
-		if (decision.id === 'replace') {
-			await joplin.data.put(['notes', note.id], null, { body: reply });
-			await dialogs.showToast({ message: `Note AI: 已取代筆記全文（${modeLabel}）`, type: ToastType.Success });
-		} else if (decision.id === 'append') {
-			const fresh = await joplin.data.get(['notes', note.id], { fields: ['body'] });
-			const body = `${fresh.body}\n\n---\n**AI ${modeLabel}結果：**\n\n${reply}`;
-			await joplin.data.put(['notes', note.id], null, { body });
-			await dialogs.showToast({ message: `Note AI: 已附加到筆記末尾（${modeLabel}）`, type: ToastType.Success });
-		} else if (decision.id === 'insert') {
-			await joplin.commands.execute('insertText', reply);
-			await dialogs.showToast({ message: `Note AI: 已插入到游標處（${modeLabel}）`, type: ToastType.Success });
-		}
+		const fresh = await joplin.data.get(['notes', note.id], { fields: ['body'] });
+		const body = `${fresh.body}\n\n---\n**AI ${modeLabel}結果：**\n\n${finalResult}`;
+		await joplin.data.put(['notes', note.id], null, { body });
+		await dialogs.showToast({ message: `Note AI: 已寫入筆記末尾（${modeLabel}）`, type: ToastType.Success });
 	} catch (error) {
-		console.error('Note AI: magic wand error', error);
+		console.error('Note AI: error', error);
 		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
 	} finally {
 		busy = false;
