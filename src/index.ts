@@ -1,6 +1,6 @@
 import joplin from 'api';
 import { SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
-import { callLLM } from './llm';
+import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
 
 const SETTING_SECTION = 'noteAi';
@@ -11,6 +11,12 @@ const SETTING_API_KEY = 'aiApiKey';
 const SETTING_GEMINI_API_KEY = 'aiGeminiApiKey';
 const SETTING_DEEPSEEK_API_KEY = 'aiDeepseekApiKey';
 const SETTING_OPENCODE_API_KEY = 'aiOpencodeApiKey';
+const SETTING_OPENAI_API_KEY = 'aiOpenaiApiKey';
+const SETTING_CLAUDE_API_KEY = 'aiClaudeApiKey';
+const SETTING_GROK_API_KEY = 'aiGrokApiKey';
+const SETTING_KIMI_API_KEY = 'aiKimiApiKey';
+const SETTING_QWEN_API_KEY = 'aiQwenApiKey';
+const SETTING_OLLAMA_API_KEY = 'aiOllamaApiKey';
 const SETTING_MODEL = 'aiModel';
 const SETTING_SYSTEM_PROMPT = 'aiSystemPrompt';
 const SETTING_TEMPERATURE = 'aiTemperature';
@@ -23,18 +29,31 @@ const PROVIDER_CUSTOM = 0;
 const PROVIDER_GEMINI = 1;
 const PROVIDER_DEEPSEEK = 2;
 const PROVIDER_OPENCODE = 3;
+const PROVIDER_OPENAI = 4;
+const PROVIDER_CLAUDE = 5;
+const PROVIDER_GROK = 6;
+const PROVIDER_KIMI = 7;
+const PROVIDER_QWEN = 8;
+const PROVIDER_OLLAMA = 9;
 
 const PROVIDER_OPTIONS: Record<number, string> = {
 	[PROVIDER_CUSTOM]: '自訂（OpenAI 相容）',
+	[PROVIDER_OPENAI]: 'OpenAI',
 	[PROVIDER_GEMINI]: 'Google Gemini',
+	[PROVIDER_CLAUDE]: 'Claude (Anthropic)',
 	[PROVIDER_DEEPSEEK]: 'DeepSeek',
 	[PROVIDER_OPENCODE]: 'OpenCode',
+	[PROVIDER_GROK]: 'xAI Grok',
+	[PROVIDER_KIMI]: 'Kimi (Moonshot)',
+	[PROVIDER_QWEN]: 'Qwen (DashScope)',
+	[PROVIDER_OLLAMA]: 'Ollama（本機）',
 };
 
 interface LLMConfig {
 	baseUrl: string;
 	apiKey: string;
 	model: string;
+	apiFormat: ApiFormat;
 	systemPrompt: string;
 	temperature: number;
 	topP: number;
@@ -45,15 +64,30 @@ interface ProviderPreset {
 	defaultModel: string;
 	keySetting: string;
 	keyLabel: string;
+	apiFormat?: ApiFormat;
+	keyOptional?: boolean;
 }
 
 const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 	[PROVIDER_CUSTOM]: null,
+	[PROVIDER_OPENAI]: {
+		baseUrl: 'https://api.openai.com/v1',
+		defaultModel: 'gpt-5.5',
+		keySetting: SETTING_OPENAI_API_KEY,
+		keyLabel: 'OpenAI',
+	},
 	[PROVIDER_GEMINI]: {
 		baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-		defaultModel: 'gemini-2.5-flash',
+		defaultModel: 'gemini-3.8-flash',
 		keySetting: SETTING_GEMINI_API_KEY,
 		keyLabel: 'Google Gemini',
+	},
+	[PROVIDER_CLAUDE]: {
+		baseUrl: 'https://api.anthropic.com/v1',
+		defaultModel: 'claude-sonnet-5',
+		keySetting: SETTING_CLAUDE_API_KEY,
+		keyLabel: 'Claude',
+		apiFormat: 'anthropic',
 	},
 	[PROVIDER_DEEPSEEK]: {
 		baseUrl: 'https://api.deepseek.com',
@@ -66,6 +100,31 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 		defaultModel: 'glm-5.2',
 		keySetting: SETTING_OPENCODE_API_KEY,
 		keyLabel: 'OpenCode',
+	},
+	[PROVIDER_GROK]: {
+		baseUrl: 'https://api.x.ai/v1',
+		defaultModel: 'grok-4.6',
+		keySetting: SETTING_GROK_API_KEY,
+		keyLabel: 'xAI Grok',
+	},
+	[PROVIDER_KIMI]: {
+		baseUrl: 'https://api.moonshot.ai/v1',
+		defaultModel: 'kimi-k3',
+		keySetting: SETTING_KIMI_API_KEY,
+		keyLabel: 'Kimi',
+	},
+	[PROVIDER_QWEN]: {
+		baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+		defaultModel: 'qwen3.7-max',
+		keySetting: SETTING_QWEN_API_KEY,
+		keyLabel: 'Qwen',
+	},
+	[PROVIDER_OLLAMA]: {
+		baseUrl: 'http://localhost:11434/v1',
+		defaultModel: '',
+		keySetting: SETTING_OLLAMA_API_KEY,
+		keyLabel: 'Ollama',
+		keyOptional: true,
 	},
 };
 
@@ -88,6 +147,12 @@ async function readSettings(): Promise<Record<string, unknown>> {
 		SETTING_GEMINI_API_KEY,
 		SETTING_DEEPSEEK_API_KEY,
 		SETTING_OPENCODE_API_KEY,
+		SETTING_OPENAI_API_KEY,
+		SETTING_CLAUDE_API_KEY,
+		SETTING_GROK_API_KEY,
+		SETTING_KIMI_API_KEY,
+		SETTING_QWEN_API_KEY,
+		SETTING_OLLAMA_API_KEY,
 		SETTING_MODEL,
 		SETTING_SYSTEM_PROMPT,
 		SETTING_TEMPERATURE,
@@ -121,22 +186,28 @@ async function resolveLLMConfig(): Promise<LLMConfig> {
 	const s = await readSettings();
 	const provider = providerFrom(s);
 	const preset = PROVIDER_PRESETS[provider];
+	const modelOverride = String(s[SETTING_MODEL] || '').trim();
 
 	let baseUrl: string;
 	let apiKey: string;
 	let model: string;
+	let apiFormat: ApiFormat = 'openai';
 
 	if (preset) {
 		baseUrl = preset.baseUrl;
-		model = preset.defaultModel;
+		apiFormat = preset.apiFormat ?? 'openai';
+		model = modelOverride || preset.defaultModel;
 		apiKey = String(s[preset.keySetting] || '').trim();
-		if (!apiKey) {
+		if (!apiKey && !preset.keyOptional) {
 			throw new Error(`請先在設定 → Note AI 中，於 Provider「${preset.keyLabel}」狀態下的 API Key 欄位填入金鑰`);
+		}
+		if (!model) {
+			throw new Error(`請在設定 → Note AI 的「Model（覆寫，選填）」欄位填入模型名稱（Provider「${preset.keyLabel}」未內建預設模型，本機服務請填入已安裝的模型）`);
 		}
 	} else {
 		baseUrl = String(s[SETTING_BASE_URL] || '').trim() || 'https://api.openai.com/v1';
 		apiKey = String(s[SETTING_API_KEY] || '').trim();
-		model = String(s[SETTING_MODEL] || '').trim() || 'gpt-4o-mini';
+		model = modelOverride || 'gpt-5.5';
 		if (!apiKey) {
 			throw new Error('請先在設定 → Note AI 中，於 Provider「自訂」狀態下的 API Key 欄位填入金鑰');
 		}
@@ -146,6 +217,7 @@ async function resolveLLMConfig(): Promise<LLMConfig> {
 		baseUrl,
 		apiKey,
 		model,
+		apiFormat,
 		systemPrompt: String(s[SETTING_SYSTEM_PROMPT] || ''),
 		temperature: parseNumber(s[SETTING_TEMPERATURE], 0.7),
 		topP: parseNumber(s[SETTING_TOP_P], 1.0),
@@ -172,7 +244,7 @@ async function processNote() {
 		}
 
 		const config = await resolveLLMConfig();
-		console.info('Note AI: settings loaded', { baseUrl: config.baseUrl, model: config.model, temperature: config.temperature, topP: config.topP });
+		console.info('Note AI: settings loaded', { baseUrl: config.baseUrl, model: config.model, apiFormat: config.apiFormat, temperature: config.temperature, topP: config.topP });
 
 		const selectedText = await getSelectedText();
 		const userContent = selectedText || note.body;
@@ -183,6 +255,7 @@ async function processNote() {
 			baseUrl: config.baseUrl,
 			apiKey: config.apiKey,
 			model: config.model,
+			apiFormat: config.apiFormat,
 			temperature: config.temperature,
 			topP: config.topP,
 			messages: [
@@ -230,7 +303,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'LLM Provider',
-				description: '切換供應商；下方 API Key 欄位會自動載入所選供應商的金鑰，「自訂」才需填寫 Base URL / Model',
+				description: '切換供應商；下方 API Key 欄位會自動載入所選供應商的金鑰，「自訂」才需填寫 Base URL',
 			},
 			[SETTING_API_KEY_EDITOR]: {
 				value: '',
@@ -239,7 +312,7 @@ joplin.plugins.register({
 				public: true,
 				secure: true,
 				label: 'API Key',
-				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存）。供應商端點：Gemini https://generativelanguage.googleapis.com/v1beta/openai、DeepSeek https://api.deepseek.com、OpenCode https://opencode.ai/zen/v1',
+				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存；Ollama 本機服務可留空）。官方端點：OpenAI https://api.openai.com/v1、Gemini https://generativelanguage.googleapis.com/v1beta/openai、Claude https://api.anthropic.com/v1、DeepSeek https://api.deepseek.com、OpenCode https://opencode.ai/zen/v1、Grok https://api.x.ai/v1、Kimi https://api.moonshot.ai/v1、Qwen https://dashscope-intl.aliyuncs.com/compatible-mode/v1、Ollama http://localhost:11434/v1',
 			},
 			[SETTING_BASE_URL]: {
 				value: 'https://api.openai.com/v1',
@@ -247,7 +320,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'API Base URL（自訂）',
-				description: '僅在 Provider 為「自訂」時使用，例如 https://api.openai.com/v1',
+				description: '僅在 Provider 為「自訂」時使用，例如 https://api.openai.com/v1 或本機服務 http://localhost:1234/v1',
 			},
 			[SETTING_API_KEY]: {
 				value: '',
@@ -258,6 +331,15 @@ joplin.plugins.register({
 				label: 'API Key - 自訂',
 				description: '內部儲存：Provider「自訂」的金鑰',
 			},
+			[SETTING_OPENAI_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - OpenAI',
+				description: '內部儲存：Provider「OpenAI」的金鑰（端點：https://api.openai.com/v1）',
+			},
 			[SETTING_GEMINI_API_KEY]: {
 				value: '',
 				type: SettingItemType.String,
@@ -266,6 +348,15 @@ joplin.plugins.register({
 				secure: true,
 				label: 'API Key - Google Gemini',
 				description: '內部儲存：Provider「Google Gemini」的金鑰（端點：https://generativelanguage.googleapis.com/v1beta/openai）',
+			},
+			[SETTING_CLAUDE_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - Claude',
+				description: '內部儲存：Provider「Claude」的金鑰（端點：https://api.anthropic.com/v1）',
 			},
 			[SETTING_DEEPSEEK_API_KEY]: {
 				value: '',
@@ -285,13 +376,49 @@ joplin.plugins.register({
 				label: 'API Key - OpenCode',
 				description: '內部儲存：Provider「OpenCode」的金鑰（端點：https://opencode.ai/zen/v1）',
 			},
+			[SETTING_GROK_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - xAI Grok',
+				description: '內部儲存：Provider「xAI Grok」的金鑰（端點：https://api.x.ai/v1）',
+			},
+			[SETTING_KIMI_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - Kimi',
+				description: '內部儲存：Provider「Kimi」的金鑰（端點：https://api.moonshot.ai/v1）',
+			},
+			[SETTING_QWEN_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - Qwen',
+				description: '內部儲存：Provider「Qwen」的金鑰（端點：https://dashscope-intl.aliyuncs.com/compatible-mode/v1）',
+			},
+			[SETTING_OLLAMA_API_KEY]: {
+				value: '',
+				type: SettingItemType.String,
+				section: SETTING_SECTION,
+				public: false,
+				secure: true,
+				label: 'API Key - Ollama',
+				description: '內部儲存：Provider「Ollama」的金鑰（本機服務通常免金鑰，可留空；端點：http://localhost:11434/v1）',
+			},
 			[SETTING_MODEL]: {
-				value: 'gpt-4o-mini',
+				value: '',
 				type: SettingItemType.String,
 				section: SETTING_SECTION,
 				public: true,
-				label: 'Model（自訂）',
-				description: '僅在 Provider 為「自訂」時使用，例如 gpt-4o-mini、gemma-2-2b-it',
+				label: 'Model（覆寫，選填）',
+				description: '留空使用所選 Provider 的內建預設模型；填入後優先使用（所有 Provider 適用；本機服務需於此欄填寫模型名稱，例如 llama3.2）',
 			},
 			[SETTING_SYSTEM_PROMPT]: {
 				value: '你是一個有用的助手。請用繁體中文回答。',
@@ -319,7 +446,11 @@ joplin.plugins.register({
 			},
 		});
 
-		lastKnownProvider = providerFrom(await readSettings());
+		const initial = await readSettings();
+		if (String(initial[SETTING_MODEL] || '').trim() === 'gpt-4o-mini') {
+			await joplin.settings.setValue(SETTING_MODEL, '');
+		}
+		lastKnownProvider = providerFrom(initial);
 		await loadApiKeyEditor();
 
 		await joplin.settings.onChange(async (event) => {
@@ -366,6 +497,7 @@ joplin.plugins.register({
 						baseUrl: config.baseUrl,
 						apiKey: config.apiKey,
 						model: config.model,
+						apiFormat: config.apiFormat,
 						temperature: config.temperature,
 						topP: config.topP,
 						messages: [
