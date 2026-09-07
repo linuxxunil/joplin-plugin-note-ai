@@ -28,6 +28,8 @@ export interface MagicWandDeps {
 
 export async function createMagicWandDialog(): Promise<ViewHandle> {
 	const handle = await joplin.views.dialogs.create('noteAiMagicWandDialog');
+	await joplin.views.dialogs.addScript(handle, './lib/marked.min.js');
+	await joplin.views.dialogs.addScript(handle, './lib/purify.min.js');
 	await joplin.views.dialogs.addScript(handle, './dialog.js');
 	return handle;
 }
@@ -52,6 +54,16 @@ const DIALOG_STYLE = `
 	.note-ai-wand textarea.source-box { min-height: 90px; max-height: 22vh; }
 	.note-ai-wand textarea.result-box { min-height: 240px; }
 	.note-ai-wand input[type="text"] { width: 100%; box-sizing: border-box; margin-top: 8px; }
+	.note-ai-wand .md-preview {
+		display: none; box-sizing: border-box; min-height: 220px; max-height: 45vh;
+		overflow: auto; background: rgba(127,127,127,0.08);
+		border: 1px solid rgba(127,127,127,0.3); border-radius: 6px; padding: 12px;
+	}
+	.note-ai-wand .md-preview.md-compact { min-height: 90px; max-height: 22vh; }
+	.note-ai-wand .md-preview pre { white-space: pre-wrap; word-break: break-word; }
+	.note-ai-wand .md-preview code { background: rgba(127,127,127,0.15); border-radius: 3px; padding: 1px 4px; }
+	.note-ai-wand .md-preview pre code { background: transparent; padding: 0; }
+	.note-ai-wand .md-preview a { color: #4a86e8; }
 </style>`;
 
 function buildInputHtml(scopeLabel: string, source: string): string {
@@ -62,8 +74,10 @@ function buildInputHtml(scopeLabel: string, source: string): string {
 	<div class="toolbar">
 		<button type="button" id="noteAiReloadSource">🔄 重新載入筆記內容</button>
 		<button type="button" id="noteAiClearInput">✕ 清空</button>
+		<button type="button" id="noteAiTogglePreview1">👁 預覽 Markdown</button>
 	</div>
 	<textarea name="userInput" id="noteAiInput" placeholder="在此輸入、貼上內容，或點「重新載入筆記內容」…">${escapeHtml(source)}</textarea>
+	<div id="noteAiPreview1" class="md-preview md-compact"></div>
 	<input type="text" name="instruction" placeholder="AI 指令（選填），例如：條列化、翻成英文、更口語…">
 	<pre id="noteAiSource" style="display:none">${escapeHtml(source)}</pre>
 </div>`;
@@ -77,7 +91,11 @@ function buildPreviewHtml(scopeLabel: string, source: string, result: string): s
 	<label class="field-label">輸入內容</label>
 	<textarea readonly class="source-box">${escapeHtml(source)}</textarea>
 	<label class="field-label">生成結果（可直接編輯）</label>
-	<textarea name="result" class="result-box">${escapeHtml(result)}</textarea>
+	<div class="toolbar">
+		<button type="button" id="noteAiTogglePreview2">👁 預覽 Markdown</button>
+	</div>
+	<textarea name="result" id="noteAiResult" class="result-box">${escapeHtml(result)}</textarea>
+	<div id="noteAiPreview2" class="md-preview"></div>
 </div>`;
 }
 

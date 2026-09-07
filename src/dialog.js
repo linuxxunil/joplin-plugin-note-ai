@@ -1,9 +1,61 @@
 (function () {
 	'use strict';
 
+	var PREVIEW_PAIRS = {
+		noteAiTogglePreview1: { textareaId: 'noteAiInput', previewId: 'noteAiPreview1' },
+		noteAiTogglePreview2: { textareaId: 'noteAiResult', previewId: 'noteAiPreview2' },
+	};
+
+	function libsReady() {
+		return typeof window !== 'undefined'
+			&& window.marked
+			&& typeof window.marked.parse === 'function'
+			&& window.DOMPurify
+			&& typeof window.DOMPurify.sanitize === 'function';
+	}
+
+	function renderPreview(textarea, previewDiv) {
+		var html;
+		try {
+			html = window.DOMPurify.sanitize(window.marked.parse(textarea.value || ''));
+		} catch (err) {
+			html = '';
+		}
+		if (!html) {
+			previewDiv.textContent = textarea.value || '';
+		} else {
+			previewDiv.innerHTML = html;
+		}
+	}
+
+	function togglePreview(button) {
+		var pair = PREVIEW_PAIRS[button.id];
+		if (!pair) return;
+		var textarea = document.getElementById(pair.textareaId);
+		var preview = document.getElementById(pair.previewId);
+		if (!textarea || !preview) return;
+		if (!libsReady()) return;
+
+		var isPreviewing = preview.style.display === 'block';
+		if (isPreviewing) {
+			preview.style.display = 'none';
+			textarea.style.display = '';
+			button.textContent = '👁 預覽 Markdown';
+		} else {
+			renderPreview(textarea, preview);
+			preview.style.display = 'block';
+			textarea.style.display = 'none';
+			button.textContent = '✏️ 回到編輯';
+		}
+	}
+
 	function handleActivate(event) {
 		var target = event.target;
 		if (!target || !target.id) return;
+		if (PREVIEW_PAIRS[target.id]) {
+			togglePreview(target);
+			return;
+		}
 		var input = document.getElementById('noteAiInput');
 		if (!input) return;
 		if (target.id === 'noteAiReloadSource') {

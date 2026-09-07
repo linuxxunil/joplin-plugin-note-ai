@@ -1,5 +1,5 @@
 import joplin from 'api';
-import { SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
+import { SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
 
@@ -17,6 +17,15 @@ const SETTING_GROK_API_KEY = 'aiGrokApiKey';
 const SETTING_KIMI_API_KEY = 'aiKimiApiKey';
 const SETTING_QWEN_API_KEY = 'aiQwenApiKey';
 const SETTING_OLLAMA_API_KEY = 'aiOllamaApiKey';
+const SETTING_URL_OPENAI = 'aiUrlOpenai';
+const SETTING_URL_GEMINI = 'aiUrlGemini';
+const SETTING_URL_CLAUDE = 'aiUrlClaude';
+const SETTING_URL_DEEPSEEK = 'aiUrlDeepseek';
+const SETTING_URL_OPENCODE = 'aiUrlOpencode';
+const SETTING_URL_GROK = 'aiUrlGrok';
+const SETTING_URL_KIMI = 'aiUrlKimi';
+const SETTING_URL_QWEN = 'aiUrlQwen';
+const SETTING_URL_OLLAMA = 'aiUrlOllama';
 const SETTING_MODEL = 'aiModel';
 const SETTING_SYSTEM_PROMPT = 'aiSystemPrompt';
 const SETTING_TEMPERATURE = 'aiTemperature';
@@ -63,6 +72,7 @@ interface ProviderPreset {
 	baseUrl: string;
 	defaultModel: string;
 	keySetting: string;
+	urlSetting: string;
 	keyLabel: string;
 	apiFormat?: ApiFormat;
 	keyOptional?: boolean;
@@ -74,18 +84,21 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 		baseUrl: 'https://api.openai.com/v1',
 		defaultModel: 'gpt-5.5',
 		keySetting: SETTING_OPENAI_API_KEY,
+		urlSetting: SETTING_URL_OPENAI,
 		keyLabel: 'OpenAI',
 	},
 	[PROVIDER_GEMINI]: {
 		baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
 		defaultModel: 'gemini-3.8-flash',
 		keySetting: SETTING_GEMINI_API_KEY,
+		urlSetting: SETTING_URL_GEMINI,
 		keyLabel: 'Google Gemini',
 	},
 	[PROVIDER_CLAUDE]: {
 		baseUrl: 'https://api.anthropic.com/v1',
 		defaultModel: 'claude-sonnet-5',
 		keySetting: SETTING_CLAUDE_API_KEY,
+		urlSetting: SETTING_URL_CLAUDE,
 		keyLabel: 'Claude',
 		apiFormat: 'anthropic',
 	},
@@ -93,36 +106,42 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 		baseUrl: 'https://api.deepseek.com',
 		defaultModel: 'deepseek-v4-flash',
 		keySetting: SETTING_DEEPSEEK_API_KEY,
+		urlSetting: SETTING_URL_DEEPSEEK,
 		keyLabel: 'DeepSeek',
 	},
 	[PROVIDER_OPENCODE]: {
-		baseUrl: 'https://opencode.ai/zen/v1',
-		defaultModel: 'glm-5.2',
+		baseUrl: 'https://opencode.ai/zen/go/v1',
+		defaultModel: 'glm-5.1',
 		keySetting: SETTING_OPENCODE_API_KEY,
+		urlSetting: SETTING_URL_OPENCODE,
 		keyLabel: 'OpenCode',
 	},
 	[PROVIDER_GROK]: {
 		baseUrl: 'https://api.x.ai/v1',
 		defaultModel: 'grok-4.6',
 		keySetting: SETTING_GROK_API_KEY,
+		urlSetting: SETTING_URL_GROK,
 		keyLabel: 'xAI Grok',
 	},
 	[PROVIDER_KIMI]: {
 		baseUrl: 'https://api.moonshot.ai/v1',
 		defaultModel: 'kimi-k3',
 		keySetting: SETTING_KIMI_API_KEY,
+		urlSetting: SETTING_URL_KIMI,
 		keyLabel: 'Kimi',
 	},
 	[PROVIDER_QWEN]: {
 		baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
 		defaultModel: 'qwen3.7-max',
 		keySetting: SETTING_QWEN_API_KEY,
+		urlSetting: SETTING_URL_QWEN,
 		keyLabel: 'Qwen',
 	},
 	[PROVIDER_OLLAMA]: {
 		baseUrl: 'http://localhost:11434/v1',
 		defaultModel: '',
 		keySetting: SETTING_OLLAMA_API_KEY,
+		urlSetting: SETTING_URL_OLLAMA,
 		keyLabel: 'Ollama',
 		keyOptional: true,
 	},
@@ -131,6 +150,11 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 function slotKeyForProvider(provider: number): string {
 	const preset = PROVIDER_PRESETS[provider];
 	return preset ? preset.keySetting : SETTING_API_KEY;
+}
+
+function urlSlotForProvider(provider: number): string {
+	const preset = PROVIDER_PRESETS[provider];
+	return preset ? preset.urlSetting : SETTING_BASE_URL;
 }
 
 function parseNumber(value: unknown, fallback: number): number {
@@ -153,6 +177,15 @@ async function readSettings(): Promise<Record<string, unknown>> {
 		SETTING_KIMI_API_KEY,
 		SETTING_QWEN_API_KEY,
 		SETTING_OLLAMA_API_KEY,
+		SETTING_URL_OPENAI,
+		SETTING_URL_GEMINI,
+		SETTING_URL_CLAUDE,
+		SETTING_URL_DEEPSEEK,
+		SETTING_URL_OPENCODE,
+		SETTING_URL_GROK,
+		SETTING_URL_KIMI,
+		SETTING_URL_QWEN,
+		SETTING_URL_OLLAMA,
 		SETTING_MODEL,
 		SETTING_SYSTEM_PROMPT,
 		SETTING_TEMPERATURE,
@@ -164,15 +197,15 @@ function providerFrom(s: Record<string, unknown>): number {
 	return Number(s[SETTING_PROVIDER]) || PROVIDER_CUSTOM;
 }
 
-let syncingEditor = false;
+let syncingFields = false;
 let lastKnownProvider = PROVIDER_CUSTOM;
 
 async function writeSetting(key: string, value: string): Promise<void> {
-	syncingEditor = true;
+	syncingFields = true;
 	try {
 		await joplin.settings.setValue(key, value);
 	} finally {
-		syncingEditor = false;
+		syncingFields = false;
 	}
 }
 
@@ -182,11 +215,21 @@ async function loadApiKeyEditor(): Promise<void> {
 	await writeSetting(SETTING_API_KEY_EDITOR, String(s[slotKey] || ''));
 }
 
+async function loadBaseUrlField(): Promise<void> {
+	const provider = providerFrom((await readSettings()));
+	const preset = PROVIDER_PRESETS[provider];
+	if (!preset) return;
+	const s = await readSettings();
+	const savedUrl = String(s[preset.urlSetting] || '').trim();
+	await writeSetting(SETTING_BASE_URL, savedUrl || preset.baseUrl);
+}
+
 async function resolveLLMConfig(): Promise<LLMConfig> {
 	const s = await readSettings();
 	const provider = providerFrom(s);
 	const preset = PROVIDER_PRESETS[provider];
 	const modelOverride = String(s[SETTING_MODEL] || '').trim();
+	const fieldUrl = String(s[SETTING_BASE_URL] || '').trim();
 
 	let baseUrl: string;
 	let apiKey: string;
@@ -194,7 +237,7 @@ async function resolveLLMConfig(): Promise<LLMConfig> {
 	let apiFormat: ApiFormat = 'openai';
 
 	if (preset) {
-		baseUrl = preset.baseUrl;
+		baseUrl = fieldUrl || preset.baseUrl;
 		apiFormat = preset.apiFormat ?? 'openai';
 		model = modelOverride || preset.defaultModel;
 		apiKey = String(s[preset.keySetting] || '').trim();
@@ -205,7 +248,7 @@ async function resolveLLMConfig(): Promise<LLMConfig> {
 			throw new Error(`請在設定 → Note AI 的「Model（覆寫，選填）」欄位填入模型名稱（Provider「${preset.keyLabel}」未內建預設模型，本機服務請填入已安裝的模型）`);
 		}
 	} else {
-		baseUrl = String(s[SETTING_BASE_URL] || '').trim() || 'https://api.openai.com/v1';
+		baseUrl = fieldUrl || 'https://api.openai.com/v1';
 		apiKey = String(s[SETTING_API_KEY] || '').trim();
 		model = modelOverride || 'gpt-5.5';
 		if (!apiKey) {
@@ -291,7 +334,26 @@ joplin.plugins.register({
 	onStart: async function() {
 		await joplin.settings.registerSection(SETTING_SECTION, {
 			label: 'Note AI',
-			description: 'AI 設定 — 以 Provider 下拉選單切換供應商；API Key 欄位內容會跟著切換並自動保存',
+			description: 'AI 設定 — 以 Provider 下拉選單切換供應商；API Key 與 API Base URL 欄位內容會跟著切換並自動保存',
+		});
+
+		const slotItem = (keyLabel: string, label: string): SettingItem => ({
+			value: '',
+			type: SettingItemType.String,
+			section: SETTING_SECTION,
+			public: false,
+			secure: true,
+			label,
+			description: `內部儲存：Provider「${keyLabel}」的金鑰`,
+		});
+
+		const urlSlotItem = (keyLabel: string, label: string): SettingItem => ({
+			value: '',
+			type: SettingItemType.String,
+			section: SETTING_SECTION,
+			public: false,
+			label,
+			description: `內部儲存：Provider「${keyLabel}」的 API 端點（選擇該 Provider 時自動填入欄位）`,
 		});
 
 		await joplin.settings.registerSettings({
@@ -303,7 +365,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'LLM Provider',
-				description: '切換供應商；下方 API Key 欄位會自動載入所選供應商的金鑰，「自訂」才需填寫 Base URL',
+				description: '切換供應商；下方 API Key 與 API Base URL 欄位會自動載入所選供應商的設定（可自行修改，各供應商分別記憶）',
 			},
 			[SETTING_API_KEY_EDITOR]: {
 				value: '',
@@ -312,106 +374,35 @@ joplin.plugins.register({
 				public: true,
 				secure: true,
 				label: 'API Key',
-				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存；Ollama 本機服務可留空）。官方端點：OpenAI https://api.openai.com/v1、Gemini https://generativelanguage.googleapis.com/v1beta/openai、Claude https://api.anthropic.com/v1、DeepSeek https://api.deepseek.com、OpenCode https://opencode.ai/zen/v1、Grok https://api.x.ai/v1、Kimi https://api.moonshot.ai/v1、Qwen https://dashscope-intl.aliyuncs.com/compatible-mode/v1、Ollama http://localhost:11434/v1',
+				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存；Ollama 本機服務可留空）',
 			},
 			[SETTING_BASE_URL]: {
 				value: 'https://api.openai.com/v1',
 				type: SettingItemType.String,
 				section: SETTING_SECTION,
 				public: true,
-				label: 'API Base URL（自訂）',
-				description: '僅在 Provider 為「自訂」時使用，例如 https://api.openai.com/v1 或本機服務 http://localhost:1234/v1',
+				label: 'API Base URL',
+				description: '選擇 Provider 時自動填入該供應商的 API 端點；可自行修改（各供應商分別記憶自訂值）',
 			},
-			[SETTING_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - 自訂',
-				description: '內部儲存：Provider「自訂」的金鑰',
-			},
-			[SETTING_OPENAI_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - OpenAI',
-				description: '內部儲存：Provider「OpenAI」的金鑰（端點：https://api.openai.com/v1）',
-			},
-			[SETTING_GEMINI_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - Google Gemini',
-				description: '內部儲存：Provider「Google Gemini」的金鑰（端點：https://generativelanguage.googleapis.com/v1beta/openai）',
-			},
-			[SETTING_CLAUDE_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - Claude',
-				description: '內部儲存：Provider「Claude」的金鑰（端點：https://api.anthropic.com/v1）',
-			},
-			[SETTING_DEEPSEEK_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - DeepSeek',
-				description: '內部儲存：Provider「DeepSeek」的金鑰（端點：https://api.deepseek.com）',
-			},
-			[SETTING_OPENCODE_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - OpenCode',
-				description: '內部儲存：Provider「OpenCode」的金鑰（端點：https://opencode.ai/zen/v1）',
-			},
-			[SETTING_GROK_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - xAI Grok',
-				description: '內部儲存：Provider「xAI Grok」的金鑰（端點：https://api.x.ai/v1）',
-			},
-			[SETTING_KIMI_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - Kimi',
-				description: '內部儲存：Provider「Kimi」的金鑰（端點：https://api.moonshot.ai/v1）',
-			},
-			[SETTING_QWEN_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - Qwen',
-				description: '內部儲存：Provider「Qwen」的金鑰（端點：https://dashscope-intl.aliyuncs.com/compatible-mode/v1）',
-			},
-			[SETTING_OLLAMA_API_KEY]: {
-				value: '',
-				type: SettingItemType.String,
-				section: SETTING_SECTION,
-				public: false,
-				secure: true,
-				label: 'API Key - Ollama',
-				description: '內部儲存：Provider「Ollama」的金鑰（本機服務通常免金鑰，可留空；端點：http://localhost:11434/v1）',
-			},
+			[SETTING_API_KEY]: slotItem('自訂', 'API Key - 自訂'),
+			[SETTING_OPENAI_API_KEY]: slotItem('OpenAI', 'API Key - OpenAI'),
+			[SETTING_GEMINI_API_KEY]: slotItem('Google Gemini', 'API Key - Google Gemini'),
+			[SETTING_CLAUDE_API_KEY]: slotItem('Claude', 'API Key - Claude'),
+			[SETTING_DEEPSEEK_API_KEY]: slotItem('DeepSeek', 'API Key - DeepSeek'),
+			[SETTING_OPENCODE_API_KEY]: slotItem('OpenCode', 'API Key - OpenCode'),
+			[SETTING_GROK_API_KEY]: slotItem('xAI Grok', 'API Key - xAI Grok'),
+			[SETTING_KIMI_API_KEY]: slotItem('Kimi', 'API Key - Kimi'),
+			[SETTING_QWEN_API_KEY]: slotItem('Qwen', 'API Key - Qwen'),
+			[SETTING_OLLAMA_API_KEY]: slotItem('Ollama', 'API Key - Ollama'),
+			[SETTING_URL_OPENAI]: urlSlotItem('OpenAI', 'API URL - OpenAI'),
+			[SETTING_URL_GEMINI]: urlSlotItem('Google Gemini', 'API URL - Google Gemini'),
+			[SETTING_URL_CLAUDE]: urlSlotItem('Claude', 'API URL - Claude'),
+			[SETTING_URL_DEEPSEEK]: urlSlotItem('DeepSeek', 'API URL - DeepSeek'),
+			[SETTING_URL_OPENCODE]: urlSlotItem('OpenCode', 'API URL - OpenCode'),
+			[SETTING_URL_GROK]: urlSlotItem('xAI Grok', 'API URL - xAI Grok'),
+			[SETTING_URL_KIMI]: urlSlotItem('Kimi', 'API URL - Kimi'),
+			[SETTING_URL_QWEN]: urlSlotItem('Qwen', 'API URL - Qwen'),
+			[SETTING_URL_OLLAMA]: urlSlotItem('Ollama', 'API URL - Ollama'),
 			[SETTING_MODEL]: {
 				value: '',
 				type: SettingItemType.String,
@@ -452,35 +443,55 @@ joplin.plugins.register({
 		}
 		lastKnownProvider = providerFrom(initial);
 		await loadApiKeyEditor();
+		await loadBaseUrlField();
 
 		await joplin.settings.onChange(async (event) => {
 			try {
 				const keys: string[] = event.keys || [];
 				const hasProvider = keys.includes(SETTING_PROVIDER);
-				const hasEditor = keys.includes(SETTING_API_KEY_EDITOR);
-				if (!hasProvider && !hasEditor) return;
+				const hasKeyEditor = keys.includes(SETTING_API_KEY_EDITOR);
+				const hasUrlEditor = keys.includes(SETTING_BASE_URL);
+				if (!hasProvider && !hasKeyEditor && !hasUrlEditor) return;
+				if (syncingFields) return;
 
 				const s = await readSettings();
 				const currentProvider = providerFrom(s);
 
 				if (hasProvider) {
-					if (hasEditor && !syncingEditor) {
+					const previousKeySlot = slotKeyForProvider(lastKnownProvider);
+					const previousUrlSlot = urlSlotForProvider(lastKnownProvider);
+					if (hasKeyEditor) {
 						const editorValue = String(s[SETTING_API_KEY_EDITOR] || '');
-						const previousSlot = slotKeyForProvider(lastKnownProvider);
-						if (String(s[previousSlot] || '') !== editorValue) {
-							await writeSetting(previousSlot, editorValue);
+						if (String(s[previousKeySlot] || '') !== editorValue) {
+							await writeSetting(previousKeySlot, editorValue);
+						}
+					}
+					if (hasUrlEditor) {
+						const urlValue = String(s[SETTING_BASE_URL] || '').trim();
+						if (String(s[previousUrlSlot] || '') !== urlValue) {
+							await writeSetting(previousUrlSlot, urlValue);
 						}
 					}
 					lastKnownProvider = currentProvider;
 					await loadApiKeyEditor();
+					await loadBaseUrlField();
 					return;
 				}
 
-				if (syncingEditor) return;
-				const editorValue = String(s[SETTING_API_KEY_EDITOR] || '');
-				const slotKey = slotKeyForProvider(currentProvider);
-				if (String(s[slotKey] || '') === editorValue) return;
-				await writeSetting(slotKey, editorValue);
+				const currentKeySlot = slotKeyForProvider(currentProvider);
+				const currentUrlSlot = urlSlotForProvider(currentProvider);
+				if (hasKeyEditor) {
+					const editorValue = String(s[SETTING_API_KEY_EDITOR] || '');
+					if (String(s[currentKeySlot] || '') !== editorValue) {
+						await writeSetting(currentKeySlot, editorValue);
+					}
+				}
+				if (hasUrlEditor) {
+					const urlValue = String(s[SETTING_BASE_URL] || '').trim();
+					if (String(s[currentUrlSlot] || '') !== urlValue) {
+						await writeSetting(currentUrlSlot, urlValue);
+					}
+				}
 			} catch (error) {
 				console.error('Note AI: settings sync error', error);
 			}
