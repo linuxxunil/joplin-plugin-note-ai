@@ -1,8 +1,7 @@
 import joplin from 'api';
-import { SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
+import { MenuItemLocation, SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
 import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
-import { createSettingsDialog, runSettingsDialog, SettingsDialogData } from './settingsDialog';
 
 const SETTING_SECTION = 'noteAi';
 const SETTING_PROVIDER = 'aiProvider';
@@ -34,7 +33,7 @@ const SETTING_TOP_P = 'aiTopP';
 const COMMAND_CHAT = 'noteAiChat';
 const COMMAND_AI_PROCESS_NOTE = 'noteAiProcessNote';
 const COMMAND_MAGIC_WAND = 'noteAiMagicWand';
-const COMMAND_SETTINGS = 'noteAiSettings';
+const COMMAND_APPLY_ENDPOINT = 'noteAiApplyEndpoint';
 
 const PROVIDER_CUSTOM = 0;
 const PROVIDER_GEMINI = 1;
@@ -278,49 +277,26 @@ async function getSelectedText(): Promise<string | null> {
 	}
 }
 
-async function buildSettingsData(): Promise<SettingsDialogData> {
-	const s = await readSettings();
-	const options: SettingsDialogData['options'] = [];
-	const slots: SettingsDialogData['slots'] = {};
-	for (const keyStr of Object.keys(PROVIDER_OPTIONS)) {
-		const id = Number(keyStr);
-		const preset = PROVIDER_PRESETS[id];
-		options.push({
-			id,
-			label: PROVIDER_OPTIONS[id],
-			defaultUrl: preset ? preset.baseUrl : 'https://api.openai.com/v1',
-		});
-		const keySlot = slotKeyForProvider(id);
-		const urlSlot = urlSlotForProvider(id);
-		slots[String(id)] = {
-			key: String(s[keySlot] || ''),
-			url: id === PROVIDER_CUSTOM ? String(s[SETTING_BASE_URL] || '') : String(s[urlSlot] || ''),
-		};
+async function applyEndpoint(): Promise<void> {
+	try {
+		const s = await readSettings();
+		const provider = providerFrom(s);
+		const preset = PROVIDER_PRESETS[provider];
+		const label = preset ? preset.keyLabel : '自訂';
+		const url = preset
+			? (String(s[preset.urlSetting] || '').trim() || preset.baseUrl)
+			: String(s[SETTING_BASE_URL] || '').trim();
+		if (!url) {
+			alert('目前 Provider 無可套用的端點，請在 API Base URL 欄位自行填寫');
+			return;
+		}
+		await joplin.settings.setValue(SETTING_BASE_URL, url);
+		await joplin.views.dialogs.showToast({ message: `Note AI: 已套用「${label}」端點：${url}`, type: ToastType.Info });
+		console.info('Note AI: applied endpoint for', label);
+	} catch (error) {
+		console.error('Note AI: apply endpoint error', error);
+		alert(`Note AI 錯誤:\n${error instanceof Error ? error.message : String(error)}`);
 	}
-	return {
-		options,
-		slots,
-		current: {
-			provider: providerFrom(s),
-			model: String(s[SETTING_MODEL] || ''),
-			baseUrl: String(s[SETTING_BASE_URL] || ''),
-		},
-	};
-}
-
-async function saveConfigSelection(selection: { provider: number; apiKey: string; baseUrl: string; model: string }): Promise<void> {
-	const preset = PROVIDER_PRESETS[selection.provider];
-	if (preset) {
-		await joplin.settings.setValue(preset.keySetting, selection.apiKey);
-		await joplin.settings.setValue(preset.urlSetting, selection.baseUrl);
-	} else {
-		await joplin.settings.setValue(SETTING_API_KEY, selection.apiKey);
-	}
-	await joplin.settings.setValue(SETTING_BASE_URL, selection.baseUrl);
-	await joplin.settings.setValue(SETTING_API_KEY_EDITOR, selection.apiKey);
-	await joplin.settings.setValue(SETTING_PROVIDER, selection.provider);
-	await joplin.settings.setValue(SETTING_MODEL, selection.model);
-	lastKnownProvider = selection.provider;
 }
 
 async function processNote() {
@@ -429,7 +405,7 @@ joplin.plugins.register({
 				section: SETTING_SECTION,
 				public: true,
 				label: 'API Base URL',
-				description: '選擇 Provider 時自動填入該供應商的 API 端點；可自行修改（各供應商分別記憶自訂值）',
+				description: '選擇 Provider 時自動填入該供應商的 API 端點；可自行修改（各供應商分別記憶）。欄位顯示不會即時更新（Joplin 限制）：重開設定畫面即可見，或點工具列／Tools 選單「套用端點」立即套用並顯示於通知',
 			},
 			[SETTING_API_KEY]: slotItem('自訂', 'API Key - 自訂'),
 			[SETTING_OPENAI_API_KEY]: slotItem('OpenAI', 'API Key - OpenAI'),
@@ -522,6 +498,11 @@ joplin.plugins.register({
 					lastKnownProvider = currentProvider;
 					await loadApiKeyEditor();
 					await loadBaseUrlField();
+					const preset = PROVIDER_PRESETS[currentProvider];
+					if (preset) {
+						const appliedUrl = String(s[preset.urlSetting] || '').trim() || preset.baseUrl;
+						await joplin.views.dialogs.showToast({ message: `Note AI: 已載入「${preset.keyLabel}」設定 — 端點：${appliedUrl}`, type: ToastType.Info });
+					}
 					return;
 				}
 
@@ -599,24 +580,23 @@ joplin.plugins.register({
 			ToolbarButtonLocation.EditorToolbar,
 		);
 
-		const settingsHandle = await createSettingsDialog();
 		await joplin.commands.register({
-			name: COMMAND_SETTINGS,
-			label: 'Note AI: 連線設定',
-			iconName: 'fas fa-cog',
-			execute: async () => {
-				await runSettingsDialog(settingsHandle, {
-					buildData: buildSettingsData,
-					save: saveConfigSelection,
-				});
-			},
+			name: COMMAND_APPLY_ENDPOINT,
+			label: 'Note AI: 套用所選 Provider 的 API 端點',
+			iconName: 'fas fa-sync-alt',
+			execute: applyEndpoint,
 		});
 		await joplin.views.toolbarButtons.create(
-			'noteAiSettings',
-			COMMAND_SETTINGS,
+			'noteAiApplyEndpoint',
+			COMMAND_APPLY_ENDPOINT,
 			ToolbarButtonLocation.EditorToolbar,
 		);
+		await joplin.views.menuItems.create(
+			'noteAiApplyEndpointTools',
+			COMMAND_APPLY_ENDPOINT,
+			MenuItemLocation.Tools,
+		);
 
-		console.info('Note AI plugin started — toolbar buttons "noteAiMagicWand" (Note AI) and "noteAiSettings" created in EditorToolbar');
+		console.info('Note AI plugin started — toolbar buttons "noteAiMagicWand" (Note AI) and "noteAiApplyEndpoint" created in EditorToolbar');
 	},
 });
