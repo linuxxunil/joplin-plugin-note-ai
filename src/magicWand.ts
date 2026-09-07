@@ -45,6 +45,7 @@ function escapeHtml(text: string): string {
 
 const DIALOG_STYLE = `
 <style>
+	#joplin-plugin-content { overflow-y: auto; max-height: 100vh; }
 	.note-ai-wand { font-family: inherit; line-height: 1.5; }
 	.note-ai-wand .scope { color: #888; }
 	.note-ai-wand .toolbar { margin: 10px 0 4px; }
@@ -144,6 +145,9 @@ function buildWandHtml(s: WandPageState): string {
 		resultSection = `<label class="field-label">生成結果（可直接編輯）</label>
 	<div class="toolbar">
 		<button type="button" id="noteAiTogglePreview2">👁 預覽 Markdown</button>
+		<button type="button" id="noteAiGenerate">🔄 重新生成</button>
+		<button type="button" id="noteAiAppend">➕ 加入末尾</button>
+		<button type="button" id="noteAiReplace">📄 覆蓋全文</button>
 	</div>
 	<textarea id="noteAiResult" class="result-box">${escapeHtml(s.result)}</textarea>
 	<div id="noteAiPreview2" class="md-preview"></div>`;
@@ -152,14 +156,10 @@ function buildWandHtml(s: WandPageState): string {
 	const errorBanner = s.error ? `<pre class="error-box">${escapeHtml(s.error)}</pre>` : '';
 
 	let actionBar = '';
-	if (!s.processing) {
-		const buttons = s.result || s.error
+	if (!s.processing && !s.result) {
+		const buttons = s.error
 			? [`<button type="button" id="noteAiGenerate">🔄 重新生成</button>`]
 			: [`<button type="button" id="noteAiGenerate">✨ 生成</button>`];
-		if (s.result) {
-			buttons.push(`<button type="button" id="noteAiAppend">➕ 加入末尾</button>`);
-			buttons.push(`<button type="button" id="noteAiReplace">📄 覆蓋全文</button>`);
-		}
 		actionBar = `<div class="action-bar">${buttons.join('\n\t\t')}</div>`;
 	}
 
