@@ -1,7 +1,7 @@
 import joplin from 'api';
 import { MenuItemLocation, SettingItem, SettingItemType, ToastType, ToolbarButtonLocation } from 'api/types';
 import { callLLM, ApiFormat } from './llm';
-import { createMagicWandDialog, runMagicWand, MagicWandDeps } from './magicWand';
+import { createMagicWandDialog, registerWandEvents, runMagicWand, MagicWandDeps } from './magicWand';
 import { createTestDialog, runConnectionTest, TestTarget } from './connectionTest';
 import { showErrorBox, showNoticeBox } from './notify';
 
@@ -376,7 +376,7 @@ joplin.plugins.register({
 	onStart: async function() {
 		await joplin.settings.registerSection(SETTING_SECTION, {
 			label: 'Note AI',
-			description: 'AI 設定 — 以 Provider 下拉選單切換供應商；API Key 與 API Base URL 欄位內容會跟著切換並自動保存',
+			description: 'AI 設定 — 以 Provider 下拉選單切換供應商；API Key 與 API Base URL 欄位內容會跟著切換並自動保存。測試連線：Tools 選單 →「Note AI: 測試 LLM 連線」',
 		});
 
 		const slotItem = (keyLabel: string, label: string): SettingItem => ({
@@ -416,7 +416,7 @@ joplin.plugins.register({
 				public: true,
 				secure: true,
 				label: 'API Key',
-				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存；Ollama 本機服務可留空）',
+				description: '目前所選 Provider 的金鑰（切換 Provider 時自動載入、編輯後自動保存；Ollama 本機服務可留空）。填寫後可用 Tools 選單 →「Note AI: 測試 LLM 連線」測試',
 			},
 			[SETTING_BASE_URL]: {
 				value: 'https://api.openai.com/v1',
@@ -583,6 +583,7 @@ joplin.plugins.register({
 			resolveConfig: resolveLLMConfig,
 			getSelectedText,
 		};
+		registerWandEvents(magicWandHandle, magicWandDeps);
 
 		await joplin.commands.register({
 			name: COMMAND_MAGIC_WAND,

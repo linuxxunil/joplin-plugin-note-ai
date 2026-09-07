@@ -27,12 +27,11 @@ export interface MagicWandDeps {
 	getSelectedText: () => Promise<string | null>;
 }
 
-export async function createMagicWandDialog(): Promise<ViewHandle> {
-	const handle = await joplin.views.dialogs.create('noteAiMagicWandDialog');
-	await joplin.views.dialogs.addScript(handle, './lib/marked.min.js');
-	await joplin.views.dialogs.addScript(handle, './lib/purify.min.js');
-	await joplin.views.dialogs.addScript(handle, './dialog.js');
-	return handle;
+interface WandMessage {
+	event: string;
+	userInput?: string;
+	instruction?: string;
+	result?: string;
 }
 
 function escapeHtml(text: string): string {
@@ -44,22 +43,10 @@ function escapeHtml(text: string): string {
 		.replace(/'/g, '&#39;');
 }
 
-// Joplin 表單收集結構為 { 表單名: { 欄位名: 值 } }，需跨表單名攤平讀取
-function extractFormValues(formData: unknown, field: string): string {
-	if (!formData || typeof formData !== 'object') return '';
-	for (const formValues of Object.values(formData as Record<string, unknown>)) {
-		if (!formValues || typeof formValues !== 'object') continue;
-		const value = (formValues as Record<string, unknown>)[field];
-		if (value !== undefined && value !== null) return String(value);
-	}
-	return '';
-}
-
 const DIALOG_STYLE = `
 <style>
 	.note-ai-wand { font-family: inherit; line-height: 1.5; }
 	.note-ai-wand .scope { color: #888; }
-	.note-ai-wand form { margin: 0; }
 	.note-ai-wand .toolbar { margin: 10px 0 4px; }
 	.note-ai-wand .toolbar button { margin-right: 8px; padding: 4px 12px; cursor: pointer; }
 	.note-ai-wand .field-label { display: block; margin: 14px 0 4px; font-weight: bold; }
@@ -67,6 +54,9 @@ const DIALOG_STYLE = `
 	.note-ai-wand textarea.source-box { min-height: 90px; max-height: 22vh; }
 	.note-ai-wand textarea.result-box { min-height: 240px; }
 	.note-ai-wand input[type="text"] { width: 100%; box-sizing: border-box; margin-top: 8px; }
+	.note-ai-wand .action-bar { margin-top: 14px; }
+	.note-ai-wand .action-bar button { margin-right: 8px; padding: 4px 12px; cursor: pointer; }
+	.note-ai-wand .input-warning { color: #c85050; margin: 8px 0 0; }
 	.note-ai-wand .processing { text-align: center; padding: 80px 0; }
 	.note-ai-wand .spinner {
 		width: 36px; height: 36px; margin: 0 auto 18px;
@@ -99,22 +89,26 @@ const DIALOG_STYLE = `
 	}
 </style>`;
 
-function buildInputHtml(scopeLabel: string, source: string): string {
+function buildInputHtml(scopeLabel: string, prefill: string, instruction: string, currentValue: string): string {
+	const textareaValue = currentValue || prefill;
 	return `${DIALOG_STYLE}
 <div class="note-ai-wand">
 	<h3>Note AI</h3>
-	<p class="scope">輸入框已預填：<b>${escapeHtml(scopeLabel)}</b>（可直接編輯、清空或自行輸入內容，點「生成」送出）</p>
+	<p class="scope">輸入框已預填：<b>${escapeHtml(scopeLabel)}</b>（可編輯、清空或自行輸入，點「生成」送出）</p>
+	<label class="field-label" for="noteAiInstruction">AI 指令（選填）</label>
+	<input type="text" id="noteAiInstruction" placeholder="例如：條列化、翻成英文、更口語…" value="${escapeHtml(instruction)}">
 	<div class="toolbar">
 		<button type="button" id="noteAiReloadSource">🔄 重新載入筆記內容</button>
 		<button type="button" id="noteAiClearInput">✕ 清空</button>
 		<button type="button" id="noteAiTogglePreview1">👁 預覽 Markdown</button>
 	</div>
-	<form name="noteAiInput">
-		<textarea name="userInput" id="noteAiInput" placeholder="在此輸入、貼上內容，或點「重新載入筆記內容」…">${escapeHtml(source)}</textarea>
-		<div id="noteAiPreview1" class="md-preview md-compact"></div>
-		<input type="text" name="instruction" placeholder="AI 指令（選填），例如：條列化、翻成英文、更口語…">
-	</form>
-	<pre id="noteAiSource" style="display:none">${escapeHtml(source)}</pre>
+	<textarea id="noteAiInput" placeholder="在此輸入、貼上內容，或點「重新載入筆記內容」…">${escapeHtml(textareaValue)}</textarea>
+	<div id="noteAiPreview1" class="md-preview md-compact"></div>
+	<p id="noteAiInputWarning" class="input-warning" style="display:none"></p>
+	<pre id="noteAiSource" style="display:none">${escapeHtml(prefill)}</pre>
+	<div class="action-bar">
+		<button type="button" id="noteAiGenerate">✨ 生成</button>
+	</div>
 </div>`;
 }
 
@@ -123,7 +117,7 @@ function buildProcessingHtml(model: string): string {
 <div class="note-ai-wand">
 	<div class="processing">
 		<div class="spinner"></div>
-		<p><b>AI 處理中，請稍候…</b></p>
+		<p><b>AI 獲取中，請稍候…</b></p>
 		<p class="model">模型：${escapeHtml(model)}</p>
 	</div>
 </div>`;
@@ -135,34 +129,193 @@ function buildErrorHtml(message: string): string {
 	<h3>Note AI</h3>
 	<p><b>⚠️ 發生錯誤</b></p>
 	<pre class="error-box">${escapeHtml(message)}</pre>
+	<div class="action-bar">
+		<button type="button" id="noteAiRegenerate">🔄 重新生成</button>
+		<button type="button" id="noteAiBack">✏️ 返回編輯</button>
+	</div>
 </div>`;
 }
 
-function buildPreviewHtml(scopeLabel: string, source: string, result: string): string {
+function buildResultHtml(scopeLabel: string, userInput: string, result: string): string {
 	return `${DIALOG_STYLE}
 <div class="note-ai-wand">
 	<h3>Note AI</h3>
-	<p class="scope">處理範圍：<b>${escapeHtml(scopeLabel)}</b> — 請確認生成結果，選擇「覆蓋全文」或「加入末尾」寫入筆記，或按「取消」放棄。</p>
-	<label class="field-label">輸入內容</label>
-	<textarea readonly class="source-box">${escapeHtml(source)}</textarea>
+	<p class="scope">處理範圍：<b>${escapeHtml(scopeLabel)}</b> — 寫入時以「生成結果」內容為準；「重新生成」會以原輸入重跑 AI。</p>
+	<label class="field-label">輸入內容（唯讀）</label>
+	<textarea readonly class="source-box">${escapeHtml(userInput)}</textarea>
 	<label class="field-label">生成結果（可直接編輯）</label>
 	<div class="toolbar">
 		<button type="button" id="noteAiTogglePreview2">👁 預覽 Markdown</button>
 	</div>
-	<form name="noteAiResult">
-		<textarea name="result" id="noteAiResult" class="result-box">${escapeHtml(result)}</textarea>
-		<div id="noteAiPreview2" class="md-preview"></div>
-	</form>
+	<textarea id="noteAiResult" class="result-box">${escapeHtml(result)}</textarea>
+	<div id="noteAiPreview2" class="md-preview"></div>
+	<div class="action-bar">
+		<button type="button" id="noteAiRegenerate">🔄 重新生成</button>
+		<button type="button" id="noteAiAppend">➕ 加入末尾</button>
+		<button type="button" id="noteAiReplace">📄 覆蓋全文</button>
+	</div>
 </div>`;
 }
 
-let busy = false;
+interface WandState {
+	noteId: string;
+	scopeLabel: string;
+	source: string;
+	userInput: string;
+	instruction: string;
+	reply: string;
+}
 
-async function showProcessingError(handle: ViewHandle, message: string): Promise<void> {
+const state: WandState = {
+	noteId: '',
+	scopeLabel: '',
+	source: '',
+	userInput: '',
+	instruction: '',
+	reply: '',
+};
+
+let busy = false;
+let sessionSeq = 0;
+let handlingSeq = -1;
+
+export async function createMagicWandDialog(): Promise<ViewHandle> {
+	const handle = await joplin.views.dialogs.create('noteAiMagicWandDialog');
+	await joplin.views.dialogs.addScript(handle, './lib/marked.min.js');
+	await joplin.views.dialogs.addScript(handle, './lib/purify.min.js');
+	await joplin.views.dialogs.addScript(handle, './dialog.js');
+	await joplin.views.dialogs.addScript(handle, './wand.js');
+	return handle;
+}
+
+async function setHtmlIfCurrent(handle: ViewHandle, seq: number, html: string): Promise<void> {
+	if (seq !== sessionSeq) return;
+	await joplin.views.dialogs.setHtml(handle, html);
+}
+
+async function showWandError(handle: ViewHandle, seq: number, message: string): Promise<void> {
+	await setHtmlIfCurrent(handle, seq, buildErrorHtml(message));
+}
+
+async function showInputPage(handle: ViewHandle, seq: number): Promise<void> {
+	await setHtmlIfCurrent(handle, seq, buildInputHtml(state.scopeLabel, state.source, state.instruction, state.userInput));
+}
+
+async function runGeneration(handle: ViewHandle, deps: MagicWandDeps, seq: number): Promise<void> {
 	const dialogs = joplin.views.dialogs;
-	await dialogs.setHtml(handle, buildErrorHtml(message));
-	await dialogs.setButtons(handle, [{ id: 'ok', title: '關閉' }]);
-	await dialogs.open(handle);
+	let config: MagicWandConfig;
+	try {
+		config = await deps.resolveConfig();
+	} catch (configError) {
+		console.error('Note AI: config error', configError);
+		await showWandError(handle, seq, configError instanceof Error ? configError.message : String(configError));
+		return;
+	}
+	if (seq !== sessionSeq) return;
+	await setHtmlIfCurrent(handle, seq, buildProcessingHtml(config.model));
+
+	const messages: ChatMessage[] = [
+		{ role: 'system', content: UNIFIED_SYSTEM_PROMPT },
+		{
+			role: 'user',
+			content: state.instruction ? `指令：${state.instruction}\n\n---\n\n${state.userInput}` : state.userInput,
+		},
+	];
+
+	let reply = '';
+	try {
+		reply = (await callLLM({
+			baseUrl: config.baseUrl,
+			apiKey: config.apiKey,
+			model: config.model,
+			apiFormat: config.apiFormat,
+			temperature: config.temperature,
+			topP: config.topP,
+			messages,
+		})).trim();
+	} catch (llmError) {
+		console.error('Note AI: LLM error', llmError);
+		await showWandError(handle, seq, llmError instanceof Error ? llmError.message : String(llmError));
+		return;
+	}
+	if (seq !== sessionSeq) return;
+	if (!reply) {
+		await showWandError(handle, seq, 'AI 未回傳內容，請稍後再試或調整輸入內容');
+		return;
+	}
+	state.reply = reply;
+	await setHtmlIfCurrent(handle, seq, buildResultHtml(state.scopeLabel, state.userInput, reply));
+}
+
+async function writeResult(handle: ViewHandle, mode: 'replace' | 'append', editedResult: string): Promise<void> {
+	const dialogs = joplin.views.dialogs;
+	const finalResult = editedResult.trim() || state.reply;
+	try {
+		if (mode === 'replace') {
+			await joplin.data.put(['notes', state.noteId], null, { body: finalResult });
+			await dialogs.showToast({ message: 'Note AI: 已取代筆記全文', type: ToastType.Success });
+		} else {
+			const fresh = await joplin.data.get(['notes', state.noteId], { fields: ['body'] });
+			const body = `${fresh.body}\n\n---\n**AI 生成內容：**\n\n${finalResult}`;
+			await joplin.data.put(['notes', state.noteId], null, { body });
+			await dialogs.showToast({ message: 'Note AI: 已加入筆記末尾', type: ToastType.Success });
+		}
+	} catch (error) {
+		console.error('Note AI: write error', error);
+		await dialogs.setHtml(handle, buildErrorHtml(error instanceof Error ? error.message : String(error)));
+		return;
+	}
+	await joplin.views.panels.hide(handle);
+}
+
+async function handleMessage(handle: ViewHandle, deps: MagicWandDeps, message: WandMessage, seq: number): Promise<{ ok: boolean }> {
+	switch (message.event) {
+		case 'generate': {
+			const userInput = String(message.userInput || '').trim();
+			const instruction = String(message.instruction || '').trim();
+			if (!userInput) return { ok: false };
+			state.userInput = userInput;
+			state.instruction = instruction;
+			await runGeneration(handle, deps, seq);
+			return { ok: true };
+		}
+		case 'regenerate': {
+			if (!state.userInput) return { ok: false };
+			await runGeneration(handle, deps, seq);
+			return { ok: true };
+		}
+		case 'back': {
+			await showInputPage(handle, seq);
+			return { ok: true };
+		}
+		case 'replace':
+		case 'append': {
+			await writeResult(handle, message.event === 'replace' ? 'replace' : 'append', String(message.result || ''));
+			return { ok: true };
+		}
+		default:
+			return { ok: false };
+	}
+}
+
+export function registerWandEvents(handle: ViewHandle, deps: MagicWandDeps): void {
+	type WandMessageHandler = (message: WandMessage) => Promise<unknown>;
+	type WandPanelsApi = { onMessage: (h: ViewHandle, cb: WandMessageHandler) => void };
+	const panels = joplin.views.panels as unknown as WandPanelsApi;
+	panels.onMessage(handle, async (message: WandMessage) => {
+		const seq = sessionSeq;
+		if (handlingSeq === seq) return { ok: false };
+		handlingSeq = seq;
+		try {
+			return await handleMessage(handle, deps, message, seq);
+		} catch (error) {
+			console.error('Note AI: wand message error', error);
+			await showWandError(handle, seq, error instanceof Error ? error.message : String(error));
+			return { ok: false };
+		} finally {
+			if (handlingSeq === seq) handlingSeq = -1;
+		}
+	});
 }
 
 export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Promise<void> {
@@ -171,8 +324,8 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		return;
 	}
 	busy = true;
+	sessionSeq++;
 	try {
-		const dialogs = joplin.views.dialogs;
 		const note = await joplin.workspace.selectedNote();
 		if (!note) {
 			await showNoticeBox('請先選擇一則筆記');
@@ -180,94 +333,18 @@ export async function runMagicWand(handle: ViewHandle, deps: MagicWandDeps): Pro
 		}
 
 		const selection = await deps.getSelectedText();
-		const scopeLabel = selection ? `選取段落（${selection.length} 字）` : '筆記全文';
-		const source = selection || note.body;
+		state.noteId = note.id;
+		state.scopeLabel = selection ? `選取段落（${selection.length} 字）` : '筆記全文';
+		state.source = selection || note.body;
+		state.userInput = '';
+		state.instruction = '';
+		state.reply = '';
 
-		// Phase 1: 單一輸入框（已預填當前內容，可編輯/清空/自行輸入）
+		const dialogs = joplin.views.dialogs;
 		await dialogs.setFitToContent(handle, false);
-		await dialogs.setHtml(handle, buildInputHtml(scopeLabel, source));
-		await dialogs.setButtons(handle, [
-			{ id: 'cancel', title: '取消' },
-			{ id: 'ok', title: '生成' },
-		]);
-		const input = await dialogs.open(handle);
-		if (input.id !== 'ok') return;
-		if (!input.formData) {
-			await showNoticeBox('無法讀取輸入內容（表單資料缺失），請關閉後重新開啟再試一次');
-			return;
-		}
-
-		const instruction = extractFormValues(input.formData, 'instruction').trim();
-		const userInput = extractFormValues(input.formData, 'userInput').trim();
-		if (!userInput) {
-			await showNoticeBox('輸入內容為空，請輸入內容或點「重新載入筆記內容」');
-			return;
-		}
-
-		let config: MagicWandConfig;
-		try {
-			config = await deps.resolveConfig();
-		} catch (configError) {
-			console.error('Note AI: config error', configError);
-			await showProcessingError(handle, configError instanceof Error ? configError.message : String(configError));
-			return;
-		}
-
-		// Phase 1.5: 處理中畫面 — 重新開啟視窗並保持開啟（LLM 執行期間不再關窗）
-		await dialogs.setHtml(handle, buildProcessingHtml(config.model));
-		await dialogs.setButtons(handle, [{ id: 'cancel', title: '取消' }]);
-		void dialogs.open(handle);
-
-		const messages: ChatMessage[] = [
-			{ role: 'system', content: UNIFIED_SYSTEM_PROMPT },
-			{
-				role: 'user',
-				content: instruction ? `指令：${instruction}\n\n---\n\n${userInput}` : userInput,
-			},
-		];
-
-		let reply = '';
-		try {
-			reply = (await callLLM({
-				baseUrl: config.baseUrl,
-				apiKey: config.apiKey,
-				model: config.model,
-				apiFormat: config.apiFormat,
-				temperature: config.temperature,
-				topP: config.topP,
-				messages,
-			})).trim();
-		} catch (llmError) {
-			console.error('Note AI: LLM error', llmError);
-			await showProcessingError(handle, llmError instanceof Error ? llmError.message : String(llmError));
-			return;
-		}
-		if (!reply) {
-			await showProcessingError(handle, 'AI 未回傳內容，請稍後再試或調整輸入內容');
-			return;
-		}
-
-		// Phase 2: 原地換頁為結果預覽（視窗保持開啟）
-		await dialogs.setHtml(handle, buildPreviewHtml(scopeLabel, userInput, reply));
-		await dialogs.setButtons(handle, [
-			{ id: 'cancel', title: '取消' },
-			{ id: 'append', title: '加入末尾' },
-			{ id: 'replace', title: '覆蓋全文' },
-		]);
-		const decision = await dialogs.open(handle);
-
-		if (decision.id === 'replace' || decision.id === 'append') {
-			const finalResult = extractFormValues(decision.formData, 'result').trim() || reply;
-			if (decision.id === 'replace') {
-				await joplin.data.put(['notes', note.id], null, { body: finalResult });
-				await dialogs.showToast({ message: 'Note AI: 已取代筆記全文', type: ToastType.Success });
-			} else {
-				const fresh = await joplin.data.get(['notes', note.id], { fields: ['body'] });
-				const body = `${fresh.body}\n\n---\n**AI 生成內容：**\n\n${finalResult}`;
-				await joplin.data.put(['notes', note.id], null, { body });
-				await dialogs.showToast({ message: 'Note AI: 已加入筆記末尾', type: ToastType.Success });
-			}
-		}
+		await dialogs.setHtml(handle, buildInputHtml(state.scopeLabel, state.source, '', ''));
+		await dialogs.setButtons(handle, [{ id: 'cancel', title: '關閉' }]);
+		await dialogs.open(handle);
 	} catch (error) {
 		console.error('Note AI: error', error);
 		await showErrorBox(error instanceof Error ? error.message : String(error));
