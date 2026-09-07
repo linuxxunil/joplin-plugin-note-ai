@@ -21,10 +21,24 @@ export interface CallLLMOptions {
 	maxTokens?: number;
 	timeoutMs?: number;
 	apiFormat?: ApiFormat;
+	sessionId?: string;
 }
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_TIMEOUT_MS = 120000;
+const OPENCODE_HOST_MARKER = 'opencode.ai';
+const NOTE_AI_USER_AGENT = 'note-ai-joplin-plugin/1.0';
+
+export function makeSessionId(): string {
+	try {
+		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+			return crypto.randomUUID();
+		}
+	} catch (error) {
+		// fall through
+	}
+	return `note-ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 interface BuiltRequest {
 	url: string;
@@ -110,6 +124,11 @@ export async function callLLM(options: CallLLMOptions): Promise<string> {
 	const request = apiFormat === 'anthropic'
 		? buildAnthropicRequest(options, model, temperature, topP, maxTokens)
 		: buildOpenAIRequest(options, model, temperature, topP, maxTokens);
+
+	if (request.url.includes(OPENCODE_HOST_MARKER)) {
+		request.headers['x-opencode-session'] = options.sessionId || makeSessionId();
+		request.headers['User-Agent'] = NOTE_AI_USER_AGENT;
+	}
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);

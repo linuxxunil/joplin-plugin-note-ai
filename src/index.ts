@@ -114,7 +114,7 @@ const PROVIDER_PRESETS: Record<number, ProviderPreset | null> = {
 	},
 	[PROVIDER_OPENCODE]: {
 		baseUrl: 'https://opencode.ai/zen/go/v1',
-		defaultModel: 'glm-5.1',
+		defaultModel: 'glm-5.3-flash',
 		keySetting: SETTING_OPENCODE_API_KEY,
 		urlSetting: SETTING_URL_OPENCODE,
 		keyLabel: 'OpenCode',

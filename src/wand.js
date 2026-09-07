@@ -44,12 +44,6 @@
 			case 'noteAiGenerate':
 				sendGenerate();
 				break;
-			case 'noteAiRegenerate':
-				send({ event: 'regenerate' });
-				break;
-			case 'noteAiBack':
-				send({ event: 'back' });
-				break;
 			case 'noteAiAppend':
 				send({ event: 'append', result: readValue('noteAiResult') });
 				break;
