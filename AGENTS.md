@@ -45,6 +45,16 @@
 - 內容必須包含：需求描述、變更摘要、驗證項目清單（建置 / 安全檢查 / 功能檢核）與結果、日期、版號。
 - **不得覆蓋或刪除歷史記錄**；同版號重測時於原檔追加「重測記錄」章節。
 
+## 發佈規範（npm / Joplin 官方外掛倉庫）
+
+- 發佈步驟見 `publish.md`；以一次性 token 旗標發佈（token 不得寫入檔案或 commit）。
+- **manifest `repository_url` 不可變更（硬性規定）**：
+  - Joplin 官方 bot（`plugin-repo-cli`，每 30 分鐘掃描 npm）有防劫持檢查（`checkIfPluginCanBeAdded.ts`）：新版本的 `repository_url` 經 normalize 後**必須與首次收錄時的登記值一致**，不一致則 `throw`，該外掛更新被**靜默跳過**（工作流整體照樣 success、不留錯誤 commit，極難察覺）。
+  - 歷史案例：v1.1.0/1.1.1 將 `repository_url` 從登記值 `https://github.com/linuxxunil` 改為實際 repo URL，導致官方外掛倉庫停在 1.0.2 達兩天；v1.1.2 以還原 URL 修復。
+  - `homepage_url` **不受**此檢查限制，可自由指向正確 repo（官方清單的 🏠 連結使用 `homepage_url`）。
+  - 若需變更 `repository_url`：先開 issue 至 `github.com/joplin/plugins` 請維護者更新官方 `manifests.json` 的登記值，之後的版本才能使用新 URL。
+  - npm `package.json` 的 `repository` 欄位不受影響（僅 npm 頁面顯示用）。
+
 ## Git 規範
 
 - 版號遞增時必須 commit，訊息格式：

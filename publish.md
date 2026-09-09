@@ -14,3 +14,5 @@
 5. Joplin 官方外掛倉庫會自動收錄（掃描有延遲）：https://joplinapp.org/plugins/
 
 > 注意：token 等同密碼，不要 commit 到 repo 或寫進專案 `.npmrc`；外洩請立即到 npm 網站 Revoke。
+
+> ⚠️ **manifest `repository_url` 不可變更**：官方 bot 檢查新版本 `repository_url` 必須與首次收錄時一致，變更會導致更新被靜默拒絕（官方外掛倉庫停留在舊版）。詳見 `AGENTS.md` 的「發佈規範」章節。
